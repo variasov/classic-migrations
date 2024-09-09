@@ -40,15 +40,12 @@ class PyMSSQLBackend(DatabaseBackend):
             sql = sql.replace('TIMESTAMP', 'DATETIME')
         if sql == """INSERT INTO "_yoyo_migration" SELECT migration_hash, migration_id, created_at_utc FROM "_yoyo_log""":
             sql = sql.replace(', created_at_utc', '')
-        # if sql == """INSERT INTO "yoyo_lock" (locked, ctime, pid) VALUES (1, %(when)s, %(pid)s)""":
-        #     del params['when']
-        #     sql = sql.replace(', ctime', '').replace(', %(when)s', '')
         if sql == """CREATE TABLE "_yoyo_log" ( id VARCHAR(36), migration_hash VARCHAR(64), migration_id VARCHAR(255), operation VARCHAR(10), username VARCHAR(255), hostname VARCHAR(255), comment VARCHAR(255), created_at_utc TIMESTAMP, PRIMARY KEY (id))""":
             sql = sql.replace('TIMESTAMP', 'DATETIME')
         if sql == """CREATE TABLE "yoyo_lock" (locked INT DEFAULT 1, ctime TIMESTAMP,pid INT NOT NULL,PRIMARY KEY (locked))""":
             sql = sql.replace('TIMESTAMP', 'DATETIME')
-
-        # print(sql, str(params))
+        from rich import print
+        print(sql, str(params))
         cursor.execute(sql, params)
         return cursor
 
@@ -58,29 +55,24 @@ class PyMSSQLBackend(DatabaseBackend):
         """
         assert not self._in_transaction
         self._in_transaction = True
-        self.execute("BEGIN TRANSACTION")
 
     def savepoint(self, id):
         """
         Create a new savepoint with the given id
         """
-        print(f"SAVE TRANSACTION {self.quote_identifier(id)}")
-        self.execute(f"SAVE TRANSACTION {self.quote_identifier(id)}")
+        pass
 
     def savepoint_release(self, id):
         """
         Release (commit) the savepoint with the given id
         """
-        print(f"RELEASE SAVEPOINT {self.quote_identifier(id)}")
-        self.execute(f"RELEASE SAVEPOINT {self.quote_identifier(id)}")
+        pass
 
     def savepoint_rollback(self, id):
         """
         Rollback the savepoint with the given id
         """
-        print(f"ROLLBACK TRANSACTION {self.quote_identifier(id)}")
-        self.execute(f"ROLLBACK TRANSACTION {self.quote_identifier(id)}")
-
+        self.connection.commit()
 
     def _insert_lock_row(self, pid, timeout, poll_interval=0.5):
         poll_interval = min(poll_interval, timeout)
@@ -103,7 +95,7 @@ class PyMSSQLBackend(DatabaseBackend):
 
     def commit(self):
         try:
-            self.execute("commit;")
+            self.connection.commit()
         except Exception as e:
             print(str(e))
         self._in_transaction = False

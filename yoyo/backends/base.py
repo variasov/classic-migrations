@@ -31,7 +31,7 @@ import uuid
 from yoyo import exceptions
 from yoyo import internalmigrations
 from yoyo import utils
-from yoyo.migrations import topological_sort
+from yoyo.migrations import topological_sort, get_migration_hash
 
 logger = getLogger("yoyo.migrations")
 
@@ -146,6 +146,14 @@ class DatabaseBackend:
         "pid INT NOT NULL,"
         "PRIMARY KEY (locked))"
     )
+    insert_log_table = (
+        "INSERT INTO {0.log_table_quoted} "
+        "(id, migration_hash, migration_id, operation, created_at_utc, "
+        "username, hostname, comment) "
+        "VALUES "
+        "(:id, :migration_hash, :migration_id, 'apply', :created_at_utc, "
+        ":username, :hostname, :comment)"
+    )
 
     _driver = None
     _is_locked = False
@@ -154,6 +162,7 @@ class DatabaseBackend:
     _transactional_ddl_cache: Dict[bytes, bool] = {}
 
     def __init__(self, dburi, migration_table):
+        print(f'migration_table: {migration_table}')
         self.uri = dburi
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect(dburi)
@@ -169,6 +178,79 @@ class DatabaseBackend:
         self._transactional_ddl_cache[
             pickle.dumps(self.uri)
         ] = self.has_transactional_ddl
+        self._upgrade()
+
+    def needs_upgrading(self):
+        return True
+
+    def _upgrade(self):
+        self._create_log_table()
+        self._create_version_table()
+        self._create_migration_table()
+        cursor = self.execute(f"SELECT * FROM {self.migration_table_quoted}")
+        migration_id = ""
+        created_at = datetime(1970, 1, 1)
+        for migration_id, created_at in iter(cursor.fetchone,
+                                             None):  # type: ignore
+            migration_hash = get_migration_hash(migration_id)
+            log_data = dict(
+                self.get_log_data(),
+                operation="apply",
+                comment=(
+                    "this log entry created automatically by an internal schema upgrade"
+                ),
+                created_at_utc=created_at,
+                migration_hash=migration_hash,
+                migration_id=migration_id,
+            )
+            self.execute(
+                self.insert_log_table.format(self),
+                log_data,
+            )
+
+        self.execute("DROP TABLE {0.migration_table_quoted}".format(self))
+        self._create_migration_table()
+        self.execute(
+            f"INSERT INTO {self.migration_table_quoted} "
+            "SELECT migration_hash, migration_id, created_at_utc "
+            f"FROM {self.log_table_quoted}"
+        )
+
+    def _create_migration_table(self):
+        if self.migration_table not in self.list_tables():
+            self.execute(
+                f"CREATE TABLE {self.migration_table_quoted} ( "
+                # sha256 hash of the migration id
+                "migration_hash VARCHAR(64), "
+                # The migration id (ie path basename without extension)
+                "migration_id VARCHAR(255), "
+                # When this id was applied
+                "applied_at_utc TIMESTAMP, "
+                "PRIMARY KEY (migration_hash))"
+            )
+
+    def _create_log_table(self):
+        if self.log_table not in self.list_tables():
+            self.execute(
+                f"CREATE TABLE {self.log_table_quoted} ( "
+                "id VARCHAR(36), "
+                "migration_hash VARCHAR(64), "
+                "migration_id VARCHAR(255), "
+                "operation VARCHAR(10), "
+                "username VARCHAR(255), "
+                "hostname VARCHAR(255), "
+                "comment VARCHAR(255), "
+                "created_at_utc TIMESTAMP, "
+                "PRIMARY KEY (id))"
+            )
+
+    def _create_version_table(self):
+        if self.version_table not in self.list_tables():
+            self.execute(
+                f"CREATE TABLE {self.version_table_quoted} ("
+                "version INT NOT NULL PRIMARY KEY, "
+                "installed_at_utc TIMESTAMP)"
+            )
 
     def _load_driver_module(self):
         """
@@ -265,7 +347,10 @@ class DatabaseBackend:
         return self.connection.cursor()
 
     def commit(self):
-        self.connection.commit()
+        try:
+            self.connection.commit()
+        except Exception as e:
+            print(str(e))
         self._in_transaction = False
 
     def rollback(self):
@@ -362,7 +447,7 @@ class DatabaseBackend:
     def _delete_lock_row(self, pid):
         with self.transaction():
             self.execute(
-                "DELETE FROM {} WHERE pid=:pid".format(self.lock_table_quoted),
+                f"DELETE FROM {self.lock_table_quoted} WHERE pid=:pid;",
                 {"pid": pid},
             )
 
@@ -391,11 +476,8 @@ class DatabaseBackend:
         """
         Create the lock table if it does not already exist.
         """
-        try:
-            with self.transaction():
+        if self.lock_table not in self.list_tables():
                 self.execute(self.create_lock_table_sql.format(self))
-        except self.DatabaseError:
-            pass
 
     def ensure_internal_schema_updated(self):
         """
@@ -403,10 +485,10 @@ class DatabaseBackend:
         """
         if self._internal_schema_updated:
             return
-        if internalmigrations.needs_upgrading(self):
+        if self.needs_upgrading():
             assert not self._in_transaction
             with self.lock():
-                internalmigrations.upgrade(self)
+                self._upgrade()
                 self.connection.commit()
                 self._internal_schema_updated = True
 
