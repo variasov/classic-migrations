@@ -2,14 +2,46 @@ from collections.abc import Mapping
 from datetime import datetime
 import time
 
-from yoyo import internalmigrations
 from yoyo import utils
 from yoyo.backends.base import DatabaseBackend
-from yoyo import exceptions
-import pymssql
 
 class PyMSSQLBackend(DatabaseBackend):
     driver_module = "pymssql"
+
+    create_migration_table_sql = (
+        "CREATE TABLE {0.migration_table_quoted} ( "
+        # sha256 hash of the migration id
+        "migration_hash VARCHAR(64), "
+        # The migration id (ie path basename without extension)
+        "migration_id VARCHAR(255), "
+        # When this id was applied
+        "applied_at_utc DATETIME, "
+        "PRIMARY KEY (migration_hash))"
+    )
+    insert_migration_table_from_log_table_sql = (
+        "INSERT INTO {0.migration_table_quoted} "
+        "SELECT migration_hash, migration_id, created_at_utc "
+        "FROM {0.log_table_quoted}"
+    )
+    create_lock_table_sql = (
+        "CREATE TABLE {0.lock_table_quoted} ("
+        "locked INT DEFAULT 1, "
+        "ctime DATETIME,"
+        "pid INT NOT NULL,"
+        "PRIMARY KEY (locked))"
+    )
+    create_log_table_sql = (
+        "CREATE TABLE {0.log_table_quoted} ( "
+        "id VARCHAR(36), "
+        "migration_hash VARCHAR(64), "
+        "migration_id VARCHAR(255), "
+        "operation VARCHAR(10), "
+        "username VARCHAR(255), "
+        "hostname VARCHAR(255), "
+        "comment VARCHAR(255), "
+        "created_at_utc DATETIME, "
+        "PRIMARY KEY (id))"
+    )
 
     def connect(self, dburi):
         return self.driver.connect(
@@ -31,21 +63,8 @@ class PyMSSQLBackend(DatabaseBackend):
         """
         if params and not isinstance(params, Mapping):
             raise TypeError("Expected dict or other mapping object")
-
         cursor = self.cursor()
         sql, params = utils.change_param_style(self.driver.paramstyle, sql, params)
-        if sql == """CREATE TABLE "_yoyo_migration" ( migration_hash VARCHAR(64), migration_id VARCHAR(255), applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))""":
-            sql = sql.replace('TIMESTAMP','DATETIME')
-        if sql == """CREATE TABLE "_yoyo_version" (version INT NOT NULL PRIMARY KEY, installed_at_utc TIMESTAMP)""":
-            sql = sql.replace('TIMESTAMP', 'DATETIME')
-        if sql == """INSERT INTO "_yoyo_migration" SELECT migration_hash, migration_id, created_at_utc FROM "_yoyo_log""":
-            sql = sql.replace(', created_at_utc', '')
-        if sql == """CREATE TABLE "_yoyo_log" ( id VARCHAR(36), migration_hash VARCHAR(64), migration_id VARCHAR(255), operation VARCHAR(10), username VARCHAR(255), hostname VARCHAR(255), comment VARCHAR(255), created_at_utc TIMESTAMP, PRIMARY KEY (id))""":
-            sql = sql.replace('TIMESTAMP', 'DATETIME')
-        if sql == """CREATE TABLE "yoyo_lock" (locked INT DEFAULT 1, ctime TIMESTAMP,pid INT NOT NULL,PRIMARY KEY (locked))""":
-            sql = sql.replace('TIMESTAMP', 'DATETIME')
-        from rich import print
-        print(sql, str(params))
         cursor.execute(sql, params)
         return cursor
 
@@ -73,25 +92,6 @@ class PyMSSQLBackend(DatabaseBackend):
         Rollback the savepoint with the given id
         """
         self.connection.commit()
-
-    def _insert_lock_row(self, pid, timeout, poll_interval=0.5):
-        poll_interval = min(poll_interval, timeout)
-        started = time.time()
-        self.execute(
-            "INSERT INTO {} (locked, ctime, pid) "
-            "VALUES (1, :when, :pid);".format(self.lock_table_quoted),
-            {"when": datetime.utcnow(), "pid": pid},
-        )
-
-    def create_lock_table(self):
-        """
-        Create the lock table if it does not already exist.
-        """
-        try:
-            self.execute(self.create_lock_table_sql.format(self))
-            self.commit()
-        except:
-            pass
 
     def commit(self):
         try:

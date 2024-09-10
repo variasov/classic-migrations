@@ -29,7 +29,6 @@ import time
 import uuid
 
 from yoyo import exceptions
-from yoyo import internalmigrations
 from yoyo import utils
 from yoyo.migrations import topological_sort, get_migration_hash
 
@@ -109,14 +108,14 @@ class DatabaseBackend:
 
     driver_module = ""
 
-    log_table = "_yoyo_log"
-    lock_table = "yoyo_lock"
+    log_table = "_classic_migration_log"
+    lock_table = "_classic_migration_lock"
     list_tables_sql = "SELECT table_name FROM information_schema.tables"
-    version_table = "_yoyo_version"
-    migration_table = "_yoyo_migrations"
-    is_applied_sql = """
-        SELECT COUNT(1) FROM {0.migration_table_quoted}
-        WHERE id=:id"""
+    migration_table = "_classic_migration_migrations"
+    is_applied_sql = (
+        "SELECT COUNT(1) FROM {0.migration_table_quoted}"
+        "WHERE id=:id"
+    )
     mark_migration_sql = (
         "INSERT INTO {0.migration_table_quoted} "
         "(migration_hash, migration_id, applied_at_utc) "
@@ -146,13 +145,40 @@ class DatabaseBackend:
         "pid INT NOT NULL,"
         "PRIMARY KEY (locked))"
     )
-    insert_log_table = (
+    insert_log_table_sql = (
         "INSERT INTO {0.log_table_quoted} "
         "(id, migration_hash, migration_id, operation, created_at_utc, "
         "username, hostname, comment) "
         "VALUES "
         "(:id, :migration_hash, :migration_id, 'apply', :created_at_utc, "
         ":username, :hostname, :comment)"
+    )
+    insert_migration_table_from_log_table_sql = (
+        "INSERT INTO {0.migration_table_quoted} "
+        "SELECT migration_hash, migration_id, created_at_utc "
+        "FROM {0.log_table_quoted}"
+    )
+    create_migration_table_sql = (
+        "CREATE TABLE {0.migration_table_quoted} ( "
+        # sha256 hash of the migration id
+        "migration_hash VARCHAR(64), "
+        # The migration id (ie path basename without extension)
+        "migration_id VARCHAR(255), "
+        # When this id was applied
+        "applied_at_utc TIMESTAMP, "
+        "PRIMARY KEY (migration_hash))"
+    )
+    create_log_table_sql = (
+        "CREATE TABLE {0.log_table_quoted} ( "
+        "id VARCHAR(36), "
+        "migration_hash VARCHAR(64), "
+        "migration_id VARCHAR(255), "
+        "operation VARCHAR(10), "
+        "username VARCHAR(255), "
+        "hostname VARCHAR(255), "
+        "comment VARCHAR(255), "
+        "created_at_utc TIMESTAMP, "
+        "PRIMARY KEY (id))"
     )
 
     _driver = None
@@ -162,7 +188,6 @@ class DatabaseBackend:
     _transactional_ddl_cache: Dict[bytes, bool] = {}
 
     def __init__(self, dburi, migration_table):
-        print(f'migration_table: {migration_table}')
         self.uri = dburi
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect(dburi)
@@ -178,16 +203,23 @@ class DatabaseBackend:
         self._transactional_ddl_cache[
             pickle.dumps(self.uri)
         ] = self.has_transactional_ddl
-        self._upgrade()
+        if self.needs_upgrading():
+            self._upgrade()
 
     def needs_upgrading(self):
-        return True
+        list_tables = self.list_tables()
+        return (self.log_table not in list_tables
+            or self.lock_table not in list_tables
+            or self.migration_table not in list_tables
+        )
 
     def _upgrade(self):
         self._create_log_table()
-        self._create_version_table()
         self._create_migration_table()
-        cursor = self.execute(f"SELECT * FROM {self.migration_table_quoted}")
+        cursor = self.execute(
+            "SELECT migration_id, applied_at_utc "
+            f"FROM {self.migration_table_quoted}"
+        )
         migration_id = ""
         created_at = datetime(1970, 1, 1)
         for migration_id, created_at in iter(cursor.fetchone,
@@ -204,53 +236,23 @@ class DatabaseBackend:
                 migration_id=migration_id,
             )
             self.execute(
-                self.insert_log_table.format(self),
+                self.insert_log_table_sql.format(self),
                 log_data,
             )
 
         self.execute("DROP TABLE {0.migration_table_quoted}".format(self))
         self._create_migration_table()
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} "
-            "SELECT migration_hash, migration_id, created_at_utc "
-            f"FROM {self.log_table_quoted}"
+            self.insert_migration_table_from_log_table_sql.format(self)
         )
 
     def _create_migration_table(self):
         if self.migration_table not in self.list_tables():
-            self.execute(
-                f"CREATE TABLE {self.migration_table_quoted} ( "
-                # sha256 hash of the migration id
-                "migration_hash VARCHAR(64), "
-                # The migration id (ie path basename without extension)
-                "migration_id VARCHAR(255), "
-                # When this id was applied
-                "applied_at_utc TIMESTAMP, "
-                "PRIMARY KEY (migration_hash))"
-            )
+            self.execute(self.create_migration_table_sql.format(self))
 
     def _create_log_table(self):
         if self.log_table not in self.list_tables():
-            self.execute(
-                f"CREATE TABLE {self.log_table_quoted} ( "
-                "id VARCHAR(36), "
-                "migration_hash VARCHAR(64), "
-                "migration_id VARCHAR(255), "
-                "operation VARCHAR(10), "
-                "username VARCHAR(255), "
-                "hostname VARCHAR(255), "
-                "comment VARCHAR(255), "
-                "created_at_utc TIMESTAMP, "
-                "PRIMARY KEY (id))"
-            )
-
-    def _create_version_table(self):
-        if self.version_table not in self.list_tables():
-            self.execute(
-                f"CREATE TABLE {self.version_table_quoted} ("
-                "version INT NOT NULL PRIMARY KEY, "
-                "installed_at_utc TIMESTAMP)"
-            )
+            self.execute(self.create_log_table_sql.format(self))
 
     def _load_driver_module(self):
         """

@@ -38,7 +38,7 @@ from yoyo import exceptions
 from yoyo.utils import plural
 
 logger = getLogger("yoyo.migrations")
-default_migration_table = "_yoyo_migration"
+default_migration_table = "_classic_migration_migrations"
 
 hash_function = hashlib.sha256
 
