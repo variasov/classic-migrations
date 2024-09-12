@@ -18,17 +18,18 @@ import re
 import warnings
 
 import tabulate
+from icecream import ic
 
-from yoyo import (
+from classic.migrations import (
     read_migrations,
     default_migration_table,
     ancestors,
     descendants,
 )
-from yoyo.migrations import topological_sort
-from yoyo.scripts.main import InvalidArgument, get_backend
-from yoyo import utils
-
+from classic.migrations.migrations import topological_sort
+from classic.migrations.scripts.main import InvalidArgument, get_backend
+from classic.migrations import utils
+from classic.migrations.settings import Settings
 
 def install_argparsers(global_parser, subparsers):
     # Standard options
@@ -205,10 +206,14 @@ def migrations_to_revision(migrations, revision, direction):
 
     return migrations
 
-
-def get_migrations(args, backend, direction=None):
+def get_migrations(args, backend, settings:Settings, direction=None):
 
     sources = args.sources
+    if sources is None:
+        sources = settings.SOURCE
+    if len(sources)==0:
+        sources = settings.SOURCE
+
     dburi = args.database
 
     if not sources:
@@ -216,7 +221,7 @@ def get_migrations(args, backend, direction=None):
 
     if not direction:
         direction = "apply" if args.func in {mark, apply} else "rollback"
-    migrations = read_migrations(*sources)
+    migrations = read_migrations(settings.sources_list)
     migrations = filter_migrations(migrations, args.match)
     migrations = migrations_to_revision(migrations, args.revision, direction)
 
@@ -256,16 +261,16 @@ def get_migrations(args, backend, direction=None):
     return migrations
 
 
-def apply(args, config) -> int:
-    backend = get_backend(args, config)
+def apply(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend)
+        migrations = get_migrations(args, backend, settings)
         backend.apply_migrations(migrations, args.force)
     return 0
 
 
-def reapply(args, config) -> int:
-    backend = get_backend(args, config)
+def reapply(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     with backend.lock():
         migrations = get_migrations(args, backend)
         backend.rollback_migrations(migrations, args.force)
@@ -274,17 +279,17 @@ def reapply(args, config) -> int:
     return 0
 
 
-def rollback(args, config) -> int:
-    backend = get_backend(args, config)
+def rollback(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend)
+        migrations = get_migrations(args, backend, settings)
         backend.rollback_migrations(migrations, args.force)
     return 0
 
 
-def develop(args, config) -> int:
+def develop(args, settings:Settings) -> int:
     args.batch_mode = True
-    backend = get_backend(args, config)
+    backend = get_backend(args, settings)
     with backend.lock():
         migrations = get_migrations(args, backend, "apply")
         if migrations:
@@ -309,31 +314,30 @@ def develop(args, config) -> int:
     return 0
 
 
-def mark(args, config) -> int:
-    backend = get_backend(args, config)
+def mark(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     with backend.lock():
         migrations = get_migrations(args, backend)
         backend.mark_migrations(migrations)
     return 0
 
 
-def unmark(args, config) -> int:
-    backend = get_backend(args, config)
+def unmark(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     with backend.lock():
         migrations = get_migrations(args, backend)
         backend.unmark_migrations(migrations)
     return 0
 
 
-def break_lock(args, config) -> int:
-    backend = get_backend(args, config)
+def break_lock(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
     backend.break_lock()
     return 0
 
-
-def list_migrations(args, config) -> int:
-    backend = get_backend(args, config)
-    migrations = read_migrations(*args.sources)
+def list_migrations(args, settings:Settings) -> int:
+    backend = get_backend(args, settings)
+    migrations = read_migrations(settings.sources_list)
     migrations = filter_migrations(migrations, args.match)
 
     APPLIED, UNAPPLIED = "A", "U"

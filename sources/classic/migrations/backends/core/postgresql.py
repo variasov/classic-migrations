@@ -15,7 +15,7 @@
 import warnings
 from contextlib import contextmanager
 
-from yoyo.backends.base import DatabaseBackend
+from classic.migrations.backends.base import DatabaseBackend
 
 
 class PostgresqlBackend(DatabaseBackend):
@@ -23,16 +23,19 @@ class PostgresqlBackend(DatabaseBackend):
     Backend for PostgreSQL and PostgreSQL compatible databases.
 
     This backend uses psycopg2. See
-    :class:`yoyo.backends.core.postgresql.PostgresqlPsycopgBackend`
+    :class:`classic.migrations.backends.core.postgresql.PostgresqlPsycopgBackend`
     if you need psycopg3.
     """
 
     driver_module = "psycopg2"
     schema = None
-    list_tables_sql = (
-        "SELECT table_name FROM information_schema.tables "
-        "WHERE table_schema = :schema"
-    )
+    migrations_schema_exists_sql = "SELECT 1 FROM information_schema.schemata WHERE schema_name =  '{0.migrations_schema_name}';"
+    list_tables_sql = "SELECT table_name FROM information_schema.tables where table_schema = '{0.migrations_schema_name}';"
+
+    # list_tables_sql = (
+    #     "SELECT table_name FROM information_schema.tables "
+    #     "WHERE table_schema = :schema"
+    # )
 
     @property
     def TRANSACTION_STATUS_IDLE(self):

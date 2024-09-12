@@ -21,7 +21,7 @@ import string
 import sys
 import unicodedata
 
-from yoyo.config import CONFIG_EDITOR_KEY
+from classic.migrations.config import CONFIG_EDITOR_KEY
 
 try:
     import termios

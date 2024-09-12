@@ -24,7 +24,7 @@ import itertools
 import os
 import typing as t
 
-CONFIG_FILENAME = "yoyo.ini"
+CONFIG_FILENAME = "classic.migrations.ini"
 CONFIG_EDITOR_KEY = "editor"
 CONFIG_NEW_MIGRATION_COMMAND_KEY = "post_create_command"
 
@@ -112,7 +112,8 @@ def read_config(src: t.Optional[str]) -> ConfigParser:
     merged = merge_configs([config_files[p] for p in merge_paths])
     merged.remove_option("DEFAULT", INCLUDE)
     merged.remove_option("DEFAULT", INHERIT)
-
+    # from rich import print
+    # print(merged)
     return merged
 
 
@@ -141,8 +142,11 @@ def _make_path(s: str, basepath: t.Optional[Path] = None) -> Path:
 
 
 def _read_config(path: Path) -> ConfigParser:
+    # from rich import print
+    # print(path)
     config = get_configparser(get_interpolation_defaults(str(path)))
     config.read([str(path)])
+    # print(config)
     return config
 
 

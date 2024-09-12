@@ -20,8 +20,8 @@ from urllib.parse import urlencode
 from urllib.parse import urlsplit
 from urllib.parse import urlunsplit
 
-from yoyo.backends import get_backend_class
-from yoyo.migrations import default_migration_table
+from classic.migrations.backends import get_backend_class
+from classic.migrations.migrations import default_migration_table
 
 
 _DatabaseURI = namedtuple(

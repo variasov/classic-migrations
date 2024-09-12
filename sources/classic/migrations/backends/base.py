@@ -28,16 +28,16 @@ import socket
 import time
 import uuid
 
-from yoyo import exceptions
-from yoyo import utils
-from yoyo.migrations import topological_sort, get_migration_hash
+from classic.migrations import exceptions
+from classic.migrations import utils
+from classic.migrations.migrations import topological_sort, get_migration_hash
 
-logger = getLogger("yoyo.migrations")
+logger = getLogger("classic.migrations")
 
 
 class TransactionManager:
     """
-    Returned by the :meth:`~yoyo.backends.DatabaseBackend.transaction`
+    Returned by the :meth:`~classic.migrations.backends.DatabaseBackend.transaction`
     context manager.
 
     If rollback is called, the transaction is flagged to be rolled back
@@ -108,45 +108,45 @@ class DatabaseBackend:
 
     driver_module = ""
 
-    log_table = "_classic_migration_log"
-    lock_table = "_classic_migration_lock"
+    log_table = "history"
+    lock_table = "lock"
     list_tables_sql = "SELECT table_name FROM information_schema.tables"
-    migration_table = "_classic_migration_migrations"
+    migration_table = "versions"
     is_applied_sql = (
-        "SELECT COUNT(1) FROM {0.migration_table_quoted}"
+        "SELECT COUNT(1) FROM {0.migrations_schema_name_quoted}.{0.migration_table_quoted}"
         "WHERE id=:id"
     )
     mark_migration_sql = (
-        "INSERT INTO {0.migration_table_quoted} "
+        "INSERT INTO {0.migrations_schema_name_quoted}.{0.migration_table_quoted} "
         "(migration_hash, migration_id, applied_at_utc) "
         "VALUES (:migration_hash, :migration_id, :when)"
     )
     unmark_migration_sql = (
-        "DELETE FROM {0.migration_table_quoted} WHERE "
+        "DELETE FROM {0.migrations_schema_name_quoted}.{0.migration_table_quoted} WHERE "
         "migration_hash = :migration_hash"
     )
     applied_migrations_sql = (
         "SELECT migration_hash FROM "
-        "{0.migration_table_quoted} "
+        "{0.migrations_schema_name_quoted}.{0.migration_table_quoted} "
         "ORDER by applied_at_utc"
     )
     create_test_table_sql = "CREATE TABLE {table_name_quoted} " "(id INT PRIMARY KEY)"
     log_migration_sql = (
-        "INSERT INTO {0.log_table_quoted} "
+        "INSERT INTO {0.migrations_schema_name_quoted}.{0.log_table_quoted} "
         "(id, migration_hash, migration_id, operation, "
         "username, hostname, created_at_utc) "
         "VALUES (:id, :migration_hash, :migration_id, "
         ":operation, :username, :hostname, :created_at_utc)"
     )
     create_lock_table_sql = (
-        "CREATE TABLE {0.lock_table_quoted} ("
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.lock_table_quoted} ("
         "locked INT DEFAULT 1, "
         "ctime TIMESTAMP,"
         "pid INT NOT NULL,"
         "PRIMARY KEY (locked))"
     )
     insert_log_table_sql = (
-        "INSERT INTO {0.log_table_quoted} "
+        "INSERT INTO {0.migrations_schema_name_quoted}.{0.log_table_quoted} "
         "(id, migration_hash, migration_id, operation, created_at_utc, "
         "username, hostname, comment) "
         "VALUES "
@@ -154,12 +154,12 @@ class DatabaseBackend:
         ":username, :hostname, :comment)"
     )
     insert_migration_table_from_log_table_sql = (
-        "INSERT INTO {0.migration_table_quoted} "
+        "INSERT INTO {0.migrations_schema_name_quoted}.{0.migration_table_quoted} "
         "SELECT migration_hash, migration_id, created_at_utc "
-        "FROM {0.log_table_quoted}"
+        "FROM {0.migrations_schema_name_quoted}.{0.log_table_quoted}"
     )
     create_migration_table_sql = (
-        "CREATE TABLE {0.migration_table_quoted} ( "
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.migration_table_quoted} ( "
         # sha256 hash of the migration id
         "migration_hash VARCHAR(64), "
         # The migration id (ie path basename without extension)
@@ -169,7 +169,7 @@ class DatabaseBackend:
         "PRIMARY KEY (migration_hash))"
     )
     create_log_table_sql = (
-        "CREATE TABLE {0.log_table_quoted} ( "
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.log_table_quoted} ( "
         "id VARCHAR(36), "
         "migration_hash VARCHAR(64), "
         "migration_id VARCHAR(255), "
@@ -180,12 +180,14 @@ class DatabaseBackend:
         "created_at_utc TIMESTAMP, "
         "PRIMARY KEY (id))"
     )
-
+    migrations_schema_exists_sql = ""
+    create_migrations_schema_sql = "CREATE SCHEMA {0.migrations_schema_name_quoted};"
     _driver = None
     _is_locked = False
     _in_transaction = False
     _internal_schema_updated = False
     _transactional_ddl_cache: Dict[bytes, bool] = {}
+    migrations_schema_name = "migrations"
 
     def __init__(self, dburi, migration_table):
         self.uri = dburi
@@ -198,6 +200,7 @@ class DatabaseBackend:
         )
 
     def init_database(self):
+        self._create_migrations_schema()
         self.create_lock_table()
         self.has_transactional_ddl = self._check_transactional_ddl()
         self._transactional_ddl_cache[
@@ -218,7 +221,7 @@ class DatabaseBackend:
         self._create_migration_table()
         cursor = self.execute(
             "SELECT migration_id, applied_at_utc "
-            f"FROM {self.migration_table_quoted}"
+            f"FROM {self.migrations_schema_name_quoted}.{self.migration_table_quoted}"
         )
         migration_id = ""
         created_at = datetime(1970, 1, 1)
@@ -240,7 +243,7 @@ class DatabaseBackend:
                 log_data,
             )
 
-        self.execute("DROP TABLE {0.migration_table_quoted}".format(self))
+        self.execute(f"DROP TABLE {self.migrations_schema_name_quoted}.{self.migration_table_quoted}")
         self._create_migration_table()
         self.execute(
             self.insert_migration_table_from_log_table_sql.format(self)
@@ -253,6 +256,12 @@ class DatabaseBackend:
     def _create_log_table(self):
         if self.log_table not in self.list_tables():
             self.execute(self.create_log_table_sql.format(self))
+
+    def _create_migrations_schema(self):
+        try:
+            self.execute(self.create_migrations_schema_sql.format(self))
+        except self.DatabaseError:
+             pass
 
     def _load_driver_module(self):
         """
@@ -311,8 +320,8 @@ class DatabaseBackend:
         Return True if the database supports committing/rolling back
         DDL statements within a transaction
         """
-        table_name = "yoyo_tmp_{}".format(utils.get_random_string(10))
-        table_name_quoted = self.quote_identifier(table_name)
+        table_name_quoted = (self.migrations_schema_name_quoted+"."+
+                      self.quote_identifier("migration_tmp_{}".format(utils.get_random_string(10))))
         sql = self.create_test_table_sql.format(table_name_quoted=table_name_quoted)
         try:
             with self.transaction(rollback_on_exit=True):
@@ -322,7 +331,7 @@ class DatabaseBackend:
 
         try:
             with self.transaction():
-                self.execute("DROP TABLE {}".format(table_name_quoted))
+                self.execute(f"DROP TABLE {table_name_quoted}")
         except self.DatabaseError:
             return True
         return False
@@ -334,7 +343,7 @@ class DatabaseBackend:
         generated during testing
         """
         cursor = self.execute(
-            self.list_tables_sql,
+            self.list_tables_sql.format(self),
             dict({"database": self.uri.database}, **kwargs),
         )
         return [row[0] for row in cursor.fetchall()]
@@ -422,14 +431,19 @@ class DatabaseBackend:
             try:
                 with self.transaction():
                     self.execute(
-                        "INSERT INTO {} (locked, ctime, pid) "
-                        "VALUES (1, :when, :pid)".format(self.lock_table_quoted),
+                        "INSERT INTO " +
+                        self.migrations_schema_name_quoted.format(self) + "." +
+                        self.lock_table_quoted+
+                        " (locked, ctime, pid) " +
+                        "VALUES (1, :when, :pid)",
                         {"when": datetime.utcnow(), "pid": pid},
                     )
             except self.DatabaseError:
                 if timeout and time.time() > started + timeout:
                     cursor = self.execute(
-                        "SELECT pid FROM {}".format(self.lock_table_quoted)
+                        "SELECT pid FROM "+
+                        self.migrations_schema_name_quoted.format(self)+
+                        ".{}".format(self.lock_table_quoted)
                     )
                     row = cursor.fetchone()
                     if row:
@@ -449,13 +463,13 @@ class DatabaseBackend:
     def _delete_lock_row(self, pid):
         with self.transaction():
             self.execute(
-                f"DELETE FROM {self.lock_table_quoted} WHERE pid=:pid;",
+                f"DELETE FROM {self.migrations_schema_name_quoted.format(self)}.{self.lock_table_quoted} WHERE pid=:pid;",
                 {"pid": pid},
             )
 
     def break_lock(self):
         with self.transaction():
-            self.execute("DELETE FROM {}".format(self.lock_table_quoted))
+            self.execute("DELETE FROM "+self.migrations_schema_name_quoted.format(self)+".{}".format(self.lock_table_quoted))
 
     def execute(self, sql, params=None):
         """
@@ -480,6 +494,7 @@ class DatabaseBackend:
         """
         if self.lock_table not in self.list_tables():
                 self.execute(self.create_lock_table_sql.format(self))
+                self.commit()
 
     def ensure_internal_schema_updated(self):
         """
@@ -649,7 +664,7 @@ class DatabaseBackend:
 
 
 def get_backend_class(name):
-    backend_eps = entry_points(group="yoyo.backends")
+    backend_eps = entry_points(group="migrations.backends")
     return backend_eps[name].load()
 
 

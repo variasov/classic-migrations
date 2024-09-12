@@ -16,10 +16,10 @@ import pathlib
 import logging
 import sys
 
-from yoyo.config import CONFIG_FILENAME
-from yoyo.scripts.main import save_config
+from classic.migrations.config import CONFIG_FILENAME
+from classic.migrations.scripts.main import save_config
 
-logger = logging.getLogger("yoyo.migrations")
+logger = logging.getLogger("classic.migrations")
 
 
 def install_argparsers(global_parser, subparsers):

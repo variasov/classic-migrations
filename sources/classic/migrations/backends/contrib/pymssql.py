@@ -2,14 +2,14 @@ from collections.abc import Mapping
 from datetime import datetime
 import time
 
-from yoyo import utils
-from yoyo.backends.base import DatabaseBackend
+from classic.migrations import utils
+from classic.migrations.backends.base import DatabaseBackend
 
 class PyMSSQLBackend(DatabaseBackend):
     driver_module = "pymssql"
 
     create_migration_table_sql = (
-        "CREATE TABLE {0.migration_table_quoted} ( "
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.migration_table_quoted} ( "
         # sha256 hash of the migration id
         "migration_hash VARCHAR(64), "
         # The migration id (ie path basename without extension)
@@ -19,19 +19,19 @@ class PyMSSQLBackend(DatabaseBackend):
         "PRIMARY KEY (migration_hash))"
     )
     insert_migration_table_from_log_table_sql = (
-        "INSERT INTO {0.migration_table_quoted} "
+        "INSERT INTO {0.migrations_schema_name_quoted}.{0.migration_table_quoted} "
         "SELECT migration_hash, migration_id, created_at_utc "
-        "FROM {0.log_table_quoted}"
+        "FROM {0.migrations_schema_name_quoted}.{0.log_table_quoted}"
     )
     create_lock_table_sql = (
-        "CREATE TABLE {0.lock_table_quoted} ("
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.lock_table_quoted} ("
         "locked INT DEFAULT 1, "
         "ctime DATETIME,"
         "pid INT NOT NULL,"
         "PRIMARY KEY (locked))"
     )
     create_log_table_sql = (
-        "CREATE TABLE {0.log_table_quoted} ( "
+        "CREATE TABLE {0.migrations_schema_name_quoted}.{0.log_table_quoted} ( "
         "id VARCHAR(36), "
         "migration_hash VARCHAR(64), "
         "migration_id VARCHAR(255), "
@@ -42,6 +42,7 @@ class PyMSSQLBackend(DatabaseBackend):
         "created_at_utc DATETIME, "
         "PRIMARY KEY (id))"
     )
+    migrations_schema_exists_sql = "SELECT 1 FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = {0.migrations_schema_name_quoted};"
 
     def connect(self, dburi):
         return self.driver.connect(

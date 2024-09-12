@@ -34,11 +34,11 @@ import textwrap
 import pkg_resources
 import sqlparse
 
-from yoyo import exceptions
-from yoyo.utils import plural
+from classic.migrations import exceptions
+from classic.migrations.utils import plural
 
-logger = getLogger("yoyo.migrations")
-default_migration_table = "_classic_migration_migrations"
+logger = getLogger("classic.migrations")
+default_migration_table = "versions"
 
 hash_function = hashlib.sha256
 
@@ -47,7 +47,7 @@ def _is_migration_file(path):
     """
     Return True if the given path matches a migration file pattern
     """
-    from yoyo.scripts import newmigration
+    from classic.migrations.scripts import newmigration
 
     _, extension = os.path.splitext(path)
     return extension in {".py", ".sql"} and not path.startswith(
@@ -474,8 +474,7 @@ def _expand_sources(sources) -> t.Iterable[t.Tuple[str, t.List[str]]]:
                 ]
                 yield (directory, sorted(paths))
 
-
-def read_migrations(*sources):
+def read_migrations(sources):
     """
     Return a ``MigrationList`` containing all migrations from ``sources``.
     """
@@ -719,8 +718,8 @@ def heads(migration_list):
 
 
 def topological_sort(migrations: t.Iterable[Migration]) -> t.Iterable[Migration]:
-    from yoyo.topologicalsort import topological_sort as topological_sort_impl
-    from yoyo.topologicalsort import CycleError
+    from classic.migrations.topologicalsort import topological_sort as topological_sort_impl
+    from classic.migrations.topologicalsort import CycleError
 
     migration_list = list(migrations)
     all_migrations = set(migration_list)

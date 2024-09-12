@@ -15,8 +15,8 @@
 import time
 from datetime import datetime
 
-from yoyo import exceptions
-from yoyo.backends.core.postgresql import PostgresqlBackend
+from classic.migrations import exceptions
+from classic.migrations.backends.core.postgresql import PostgresqlBackend
 
 
 class RedshiftBackend(PostgresqlBackend):
@@ -56,7 +56,7 @@ class RedshiftBackend(PostgresqlBackend):
                 elif timeout and time.time() > started + timeout:
                     raise exceptions.LockTimeout(
                         "Process {} has locked this database "
-                        "(run yoyo break-lock to remove this lock)".format(row[0])
+                        "(run migrations break-lock to remove this lock)".format(row[0])
                     )
                 else:
                     time.sleep(poll_interval)

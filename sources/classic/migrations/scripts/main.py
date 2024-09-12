@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from getpass import getpass
 import argparse
 import configparser
@@ -20,16 +21,19 @@ import os
 import sys
 import typing as t
 
-from yoyo import connections
-from yoyo import default_migration_table
-from yoyo import logger
-from yoyo import utils
-from yoyo.config import CONFIG_FILENAME
-from yoyo.config import find_config
-from yoyo.config import read_config
-from yoyo.config import save_config
-from yoyo.config import config_changed
-from yoyo.config import update_argparser_defaults
+from classic.migrations import connections
+from classic.migrations import default_migration_table
+from classic.migrations import logger
+from classic.migrations import utils
+from classic.migrations.config import CONFIG_FILENAME
+from classic.migrations.config import find_config
+from classic.migrations.config import read_config
+from classic.migrations.config import save_config
+from classic.migrations.config import config_changed
+from classic.migrations.config import update_argparser_defaults
+from classic.migrations.settings import Settings
+
+settings = Settings()
 
 verbosity_levels = {
     0: logging.ERROR,
@@ -72,6 +76,7 @@ def parse_args(
 
     # Read the config file and create a dictionary of defaults for argparser
     configfile = global_args.config or find_config()
+
     config = read_config(configfile if global_args.use_config_file else None)
 
     defaults = {}
@@ -80,10 +85,8 @@ def parse_args(
             defaults[argname] = getattr(config, getter)("DEFAULT", argname)
         except configparser.NoOptionError:
             pass
-
     if "sources" in defaults:
         defaults["sources"] = defaults["sources"].split()
-
     # Set the argparser defaults to values read from the config file
     update_argparser_defaults(globalparser, defaults)
     update_argparser_defaults(argparser, defaults)
@@ -92,7 +95,6 @@ def parse_args(
 
     # Now parse for real, starting from the top
     args = argparser.parse_args(argv)
-
     # Update the args namespace with the global args.
     # This ensures that global args (eg '-v) are recognized regardless
     # of whether they were placed before or after the subparser command.
@@ -128,15 +130,22 @@ def make_argparser():
         help="Run in batch mode" ". Turns off all user prompts",
     )
 
+    # global_parser.add_argument(
+    #     "-s",
+    #     "--source",
+    #     dest="sources",
+    #     help="Source directory of migration scripts",
+    # )
+
     global_parser.add_argument(
         "--no-config-file",
         "--no-cache",
         dest="use_config_file",
         action="store_false",
         default=True,
-        help="Don't look for a yoyo.ini config file",
+        help="Don't look for a migrations.ini config file",
     )
-    argparser = argparse.ArgumentParser(prog="yoyo", parents=[global_parser])
+    argparser = argparse.ArgumentParser(prog="migrations", parents=[global_parser])
 
     subparsers = argparser.add_subparsers(help="Commands help")
 
@@ -163,16 +172,16 @@ def prompt_save_config(config, path):
     # Don't cache anything in batch mode (because we can't prompt to find the
     # user's preference).
 
-    if utils.confirm(
-        "Save migration configuration to {}?\n"
-        "This is saved in plain text and "
-        "contains your database password.\n\n"
-        "Answering 'y' means you do not have to specify "
-        "the migration source or database connection "
-        "for future runs".format(path)
-    ):
-        save_config(config, path)
-
+    # if utils.confirm(
+    #     "Save migration configuration to {}?\n"
+    #     "This is saved in plain text and "
+    #     "contains your database password.\n\n"
+    #     "Answering 'y' means you do not have to specify "
+    #     "the migration source or database connection "
+    #     "for future runs".format(path)
+    # ):
+    #     save_config(config, path)
+    ...
 
 def upgrade_legacy_config(args, config, sources):
 
@@ -244,22 +253,25 @@ def upgrade_legacy_config(args, config, sources):
         return False
 
 
-def get_backend(args, config):
-    try:
-        dburi = args.database
-    except AttributeError:
-        dburi = config.get("DEFAULT", "database")
+
+def get_backend(args, settings:Settings):
+
+
+    dburi = getattr(args, 'database', settings.DATABASE)
+    dburi = dburi or settings.DATABASE
+    if dburi is None:
+        raise InvalidArgument("Please specify a database uri")
 
     try:
         migration_table = args.migration_table
     except AttributeError:
-        try:
-            migration_table = config.get("DEFAULT", "migration_table")
-        except configparser.NoOptionError:
-            migration_table = default_migration_table
-
-    if dburi is None:
-        raise InvalidArgument("Please specify a database uri")
+        pass
+    if len(migration_table)==0:
+        migration_table = (
+            settings.VERSION_TABLE
+            if len(settings.VERSION_TABLE) == 0
+            else default_migration_table
+        )
 
     try:
         if args.prompt_password:
@@ -273,48 +285,47 @@ def get_backend(args, config):
 
 
 def main(argv=None):
-    config, argparser, args = parse_args(argv)
 
+    config, argparser, args = parse_args(argv)
     if getattr(args, "func", None) is None:
         argparser.print_usage(sys.stderr)
         argparser.exit(1)
 
-    config_is_empty = config.sections() == [] and config.items("DEFAULT") == []
+    # config_is_empty = config.sections() == [] and config.items("DEFAULT") == []
 
-    sources = getattr(args, "sources", None)
-
+    # sources = getattr(args, "sources", None)
     verbosity = args.verbosity
     verbosity = min(max_verbosity, max(min_verbosity, verbosity))
     configure_logging(verbosity)
 
-    if vars(args).get("sources"):
-        config.set("DEFAULT", "sources", " ".join(args.sources))
-    if vars(args).get("database"):
-        # ConfigParser requires that any percent signs in the db uri be escaped.
-        config.set("DEFAULT", "database", args.database.replace("%", "%%"))
-    if vars(args).get("migration_table"):
-        config.set("DEFAULT", "migration_table", args.migration_table)
-    config.set(
-        "DEFAULT",
-        "batch_mode",
-        "on" if vars(args).get("batch_mode") else "off",
-    )
-    config.set("DEFAULT", "verbosity", str(vars(args).get("verbosity")))
+    # if vars(args).get("sources"):
+    #     config.set("DEFAULT", "sources", " ".join(args.sources))
+    # if vars(args).get("database"):
+    #     # ConfigParser requires that any percent signs in the db uri be escaped.
+    #     config.set("DEFAULT", "database", args.database.replace("%", "%%"))
+    # if vars(args).get("migration_table"):
+    #     config.set("DEFAULT", "migration_table", args.migration_table)
+    # config.set(
+    #     "DEFAULT",
+    #     "batch_mode",
+    #     "on" if vars(args).get("batch_mode") else "off",
+    # )
+    # config.set("DEFAULT", "verbosity", str(vars(args).get("verbosity")))
 
-    if sources:
-        if upgrade_legacy_config(args, config, sources):
-            return main(argv)
+    # if sources:
+        # if upgrade_legacy_config(args, config, sources):
+        # return main(argv)
 
     try:
         if vars(args).get("func"):
-            exitcode = args.func(args, config)
+            exitcode = args.func(args,settings) #config
     except InvalidArgument as e:
         argparser.error(e.args[0])
 
-    if config_is_empty and args.use_config_file and not args.batch_mode:
-        config_file = args.config or CONFIG_FILENAME
-        if config_changed(config, config_file):
-            prompt_save_config(config, config_file)
+    # if config_is_empty and args.use_config_file and not args.batch_mode:
+    #     config_file = args.config or CONFIG_FILENAME
+    #     if config_changed(config, config_file):
+    #         prompt_save_config(config, config_file)
 
     return exitcode
 

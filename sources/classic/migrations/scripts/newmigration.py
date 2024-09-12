@@ -25,15 +25,15 @@ import subprocess
 import sys
 import traceback
 
-from yoyo import default_migration_table
-from yoyo.config import CONFIG_NEW_MIGRATION_COMMAND_KEY
-from yoyo.migrations import read_migrations, heads, Migration
-from yoyo import utils
+from classic.migrations import default_migration_table
+from classic.migrations.config import CONFIG_NEW_MIGRATION_COMMAND_KEY
+from classic.migrations.migrations import read_migrations, heads, Migration
+from classic.migrations import utils
 from .main import InvalidArgument
 
 from os import path, stat, unlink, rename
 
-logger = logging.getLogger("yoyo.migrations")
+logger = logging.getLogger("classic.migrations")
 
 tempfile_prefix = "_tmp_yoyonew"
 

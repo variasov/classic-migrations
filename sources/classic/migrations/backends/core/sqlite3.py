@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from yoyo.backends.base import DatabaseBackend
+from classic.migrations.backends.base import DatabaseBackend
 
 
-class ODBCBackend(DatabaseBackend):
-    driver_module = "pyodbc"
+class SQLiteBackend(DatabaseBackend):
+
+    driver_module = "sqlite3"
+    list_tables_sql = "SELECT name FROM sqlite_master WHERE type = 'table'"
 
     def connect(self, dburi):
-        args = [
-            ("UID", dburi.username),
-            ("PWD", dburi.password),
-            ("ServerName", dburi.hostname),
-            ("Port", dburi.port),
-            ("Database", dburi.database),
-        ]
-        args.extend(dburi.args.items())
-        s = ";".join("{}={}".format(k, v) for k, v in args if v is not None)
-        return self.driver.connect(s)
+        # Ensure that multiple connections share the same data
+        # https://sqlite.org/sharedcache.html
+        conn = self.driver.connect(
+            f"file:{dburi.database}?cache=shared",
+            uri=True,
+            detect_types=self.driver.PARSE_DECLTYPES,
+        )
+        conn.isolation_level = None
+        return conn
