@@ -1,2 +1,61 @@
-#!/usr/bin/env python
-__import__("setuptools").setup()
+from setuptools import setup, find_namespace_packages
+
+setup(
+    name='classic-migrations',
+    version='0.0.1',
+    description='Database migrations with SQL',
+    long_description=open('README.rst').read(),
+    long_description_content_type='text/x-rst',
+    author='Kazakovtsev Nikolay',
+    author_email='acidos@yandex.ru',
+    url='https://github.com/variasov/classic-migrations',
+    keywords='migrations migrate database alembic south',
+    license='Apache',
+    classifiers=[
+        'Development Status :: 5 - Production/Stable',
+        'Environment :: Console',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: Apache Software License',
+        'Operating System :: OS Independent',
+        'Topic :: Database',
+        'Topic :: Database :: Front-Ends',
+        'Topic :: Software Development',
+        'Topic :: Software Development :: Version Control',
+        'Programming Language :: Python :: 3',
+    ],
+    packages=find_namespace_packages(where='sources'),
+    python_requires='>=3.10',
+    install_requires=[
+        'sqlparse',
+        'tabulate',
+        'importlib_metadata>=3.6.0',
+        'pydantic[dotenv]==2.7.0',
+        'pydantic-settings==2.5',
+    ],
+    package_dir={'': 'sources'},
+    extras_require={
+        'mysql': ['PyMySQL'],
+        'postgres': ['psycopg2'],
+        'pyodbc': ['pyodbc'],
+        'pymssql': ['pymssql'],
+    },
+    entry_points={
+        'console_scripts': [
+            'migrations = classic.migrations.scripts.main:main',
+        ],
+        'migrations.backends': [
+            'pymssql = classic.migrations.backends.contrib.pymssql:PyMSSQLBackend',
+            'odbc = classic.migrations.backends.contrib.odbc:ODBCBackend',
+            'oracle = classic.migrations.backends.contrib.oracle:OracleBackend',
+            'postgres = classic.migrations.backends.core.postgresql:PostgresqlBackend',
+            'postgresql = classic.migrations.backends.core.postgresql:PostgresqlBackend',
+            'psql = classic.migrations.backends.core.postgresql:PostgresqlBackend',
+            'postgresql+psycopg = classic.migrations.backends.core.postgresql:PostgresqlPsycopgBackend',
+            'mysql = classic.migrations.backends.core.mysql:MySQLBackend',
+            'mysql+mysqldb = classic.migrations.backends.core.mysql:MySQLdbBackend',
+            'sqlite = classic.migrations.backends.core.sqlite3:SQLiteBackend',
+            'snowflake = classic.migrations.backends.contrib.snowflake:SnowflakeBackend',
+            'redshift = classic.migrations.backends.contrib.redshift:RedshiftBackend',
+        ],
+    },
+)
