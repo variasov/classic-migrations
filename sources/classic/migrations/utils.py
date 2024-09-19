@@ -21,8 +21,6 @@ import string
 import sys
 import unicodedata
 
-from classic.migrations.config import CONFIG_EDITOR_KEY
-
 try:
     import termios
 
@@ -102,19 +100,11 @@ def plural(quantity, one, plural):
     return plural.replace("%d", "%d" % quantity)
 
 
-def get_editor(config):
+def get_editor(settings):
     """
     Return the user's preferred visual editor
     """
-    try:
-        return config.get("DEFAULT", CONFIG_EDITOR_KEY)
-    except configparser.NoOptionError:
-        pass
-    for key in ["VISUAL", "EDITOR"]:
-        editor = os.environ.get(key, None)
-        if editor:
-            return editor
-    return "vi"
+    return settings.EDITOR
 
 
 def get_random_string(length, chars=(string.ascii_letters + string.digits)):

@@ -26,7 +26,6 @@ import sys
 import traceback
 
 from classic.migrations import default_migration_table
-from classic.migrations.config import CONFIG_NEW_MIGRATION_COMMAND_KEY
 from classic.migrations.migrations import read_migrations, heads, Migration
 from classic.migrations import utils
 from .main import InvalidArgument
@@ -89,12 +88,14 @@ def install_argparsers(global_parser, subparsers):
     )
 
 
-def new_migration(args, config) -> int:
-
+def new_migration(args, settings) -> int:
     try:
         directory = args.sources[0]
-    except IndexError:
-        raise InvalidArgument("Please specify a migrations directory")
+    except:
+        try:
+            directory = settings.sources_list[0]
+        except:
+            raise InvalidArgument("Please specify a migrations directory")
 
     message = args.message
     migrations = read_migrations(directory)
@@ -109,21 +110,21 @@ def new_migration(args, config) -> int:
 
     extension = ".sql" if args.sql else ".py"
     if args.batch_mode:
-        p = make_filename(config, directory, message, extension)
+        p = make_filename(settings, directory, message, extension)
         with io.open(p, "w", encoding="UTF-8") as f:
             f.write(migration_source)
     else:
-        p = create_with_editor(config, directory, migration_source, extension)
+        p = create_with_editor(settings, directory, migration_source, extension)
         if p is None:
             return 1
 
-    try:
-        command = config.get("DEFAULT", CONFIG_NEW_MIGRATION_COMMAND_KEY)
-        command = [part.format(p) for part in shlex.split(command)]
-        logger.info("Running command: %s", " ".join(command))
-        subprocess.call(command)
-    except configparser.NoOptionError:
-        pass
+    # try:
+    #     command = ''
+    #     command = [part.format(p) for part in shlex.split(command)]
+    #     logger.info("Running command: %s", " ".join(command))
+    #     subprocess.call(command)
+    # except configparser.NoOptionError:
+    #     pass
 
     print("Created file", p)
     return 0
@@ -136,7 +137,7 @@ def slugify(message):
     return s
 
 
-def make_filename(config, directory, message, extension):
+def make_filename(settings, directory, message, extension):
     lines = (line.strip() for line in message.split("\n"))
     lines = (line for line in lines if line)
     message = next(lines, None)
@@ -150,10 +151,7 @@ def make_filename(config, directory, message, extension):
     number = "01"
     rand = utils.get_random_string(5)
 
-    try:
-        prefix = config.get("DEFAULT", "prefix")
-    except configparser.NoOptionError:
-        prefix = ""
+    prefix = settings.PREFIX
 
     for p in glob.glob(path.join(directory, "{}{}_*".format(prefix, datestr))):
         n = path.basename(p)[len(prefix) + len(datestr) + 1 :].split("_")[0]

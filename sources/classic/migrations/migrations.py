@@ -50,8 +50,8 @@ def _is_migration_file(path):
     from classic.migrations.scripts import newmigration
 
     _, extension = os.path.splitext(path)
-    return extension in {".py", ".sql"} and not path.startswith(
-        newmigration.tempfile_prefix
+    return (extension in {".py", ".sql"}) and (not path.startswith(
+        newmigration.tempfile_prefix) and ('setup.py' not in path)
     )
 
 
@@ -79,7 +79,7 @@ SqlType = str
 def parse_metadata_from_sql_comments(
     s: str,
 ) -> t.Tuple[DirectivesType, LeadingCommentType, SqlType]:
-    directive_names = ["transactional", "depends"]
+    directive_names = ["transactional", "depends", "comment"]
     comment_or_empty = re.compile(r"^(\s*|\s*--.*)$").match
     directive_pattern = re.compile(
         r"^\s*--\s*({})\s*:\s*(.*)$".format("|".join(map(re.escape, directive_names)))
@@ -207,7 +207,11 @@ class Migration(object):
                 "__depends__",
                 {d for d in directives.get("depends", "").split() if d},
             )
-
+            setattr(
+                self.module,
+                "inside_sql_comment",
+                directives.get("comment", ""),
+            )
         else:
             try:
                 if spec and spec.loader:
@@ -450,6 +454,10 @@ class StepGroup(MigrationStep):
 
 def _expand_sources(sources) -> t.Iterable[t.Tuple[str, t.List[str]]]:
     package_match = re.compile(r"^package:([^\s\/:]+):(.*)$").match
+
+    if isinstance(sources,str):
+        sources = [sources]
+
     for source in sources:
         mo = package_match(source)
         if mo:

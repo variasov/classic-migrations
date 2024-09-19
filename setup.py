@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.0.1',
+    version='0.0.2',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -31,6 +31,8 @@ setup(
         'importlib_metadata>=3.6.0',
         'pydantic[dotenv]==2.7.0',
         'pydantic-settings==2.5',
+        'pymssql==2.3.1',
+        'psycopg2-binary=2.9.9',
     ],
     package_dir={'': 'sources'},
     extras_require={
