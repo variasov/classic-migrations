@@ -2,20 +2,20 @@ from pydantic_settings import BaseSettings
 from pydantic import Field
 
 class Settings(BaseSettings):
-    DB_DRIVER: str = ""
-    DB_USER: str = ""
-    DB_PASSWORD: str = ""
-    DB_HOST: str = ""
-    DB_PORT: str = ""
-    DB_NAME: str = ""
-    VERSION_TABLE: str = ""
+    DB_DRIVER: str = ''
+    DB_USER: str = ''
+    DB_PASSWORD: str = ''
+    DB_HOST: str = ''
+    DB_PORT: str = ''
+    DB_NAME: str = ''
+    VERSION_TABLE: str = ''
 
-    SOURCE: str = ""
+    SOURCE: str = ''
     BATCH_MODE: str = "no"
     VERBOSITY: int = 0
-    EDITOR: str = ""
-    POST_CREATE_COMMAND: str = ""
-    PREFIX: str = ""
+    EDITOR: str = ''
+    POST_CREATE_COMMAND: str = ''
+    PREFIX: str = ''
 
     @property
     def DATABASE(self) -> str:

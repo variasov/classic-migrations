@@ -118,14 +118,6 @@ def new_migration(args, settings) -> int:
         if p is None:
             return 1
 
-    # try:
-    #     command = ''
-    #     command = [part.format(p) for part in shlex.split(command)]
-    #     logger.info("Running command: %s", " ".join(command))
-    #     subprocess.call(command)
-    # except configparser.NoOptionError:
-    #     pass
-
     print("Created file", p)
     return 0
 
