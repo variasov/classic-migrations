@@ -51,7 +51,7 @@ def _is_migration_file(path):
 
     _, extension = os.path.splitext(path)
     return (extension in {".py", ".sql"}) and (not path.startswith(
-        newmigration.tempfile_prefix) and ('setup.py' not in path)
+        newmigration.tempfile_prefix)
     )
 
 

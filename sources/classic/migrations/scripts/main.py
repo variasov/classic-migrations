@@ -267,43 +267,16 @@ def main(argv=None):
         argparser.print_usage(sys.stderr)
         argparser.exit(1)
 
-    # config_is_empty = config.sections() == [] and config.items("DEFAULT") == []
-
-    # sources = getattr(args, "sources", None)
-    args.batch_mode = True if settings.BATCH_MODE=='on' else False
-
+    args.batch_mode = settings.BATCH_MODE
     verbosity = args.verbosity
     verbosity = min(max_verbosity, max(min_verbosity, verbosity))
     configure_logging(verbosity)
-
-    # if vars(args).get("sources"):
-    #     config.set("DEFAULT", "sources", " ".join(args.sources))
-    # if vars(args).get("database"):
-    #     # ConfigParser requires that any percent signs in the db uri be escaped.
-    #     config.set("DEFAULT", "database", args.database.replace("%", "%%"))
-    # if vars(args).get("migration_table"):
-    #     config.set("DEFAULT", "migration_table", args.migration_table)
-    # config.set(
-    #     "DEFAULT",
-    #     "batch_mode",
-    #     "on" if vars(args).get("batch_mode") else "off",
-    # )
-    # config.set("DEFAULT", "verbosity", str(vars(args).get("verbosity")))
-
-    # if sources:
-        # if upgrade_legacy_config(args, config, sources):
-        # return main(argv)
 
     try:
         if vars(args).get("func"):
             exitcode = args.func(args, settings) #config
     except InvalidArgument as e:
         argparser.error(e.args[0])
-
-    # if config_is_empty and args.use_config_file and not args.batch_mode:
-    #     config_file = args.config or CONFIG_FILENAME
-    #     if config_changed(config, config_file):
-    #         prompt_save_config(config, config_file)
 
     return exitcode
 

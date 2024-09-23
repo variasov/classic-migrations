@@ -31,15 +31,13 @@ setup(
         'importlib_metadata>=3.6.0',
         'pydantic[dotenv]==2.7.0',
         'pydantic-settings==2.5',
-        'pymssql==2.3.1',
-        'psycopg2-binary=2.9.9',
     ],
     package_dir={'': 'sources'},
     extras_require={
         'mysql': ['PyMySQL'],
-        'postgres': ['psycopg2'],
+        'postgres': ['psycopg2-binary=2.9.9'],
         'pyodbc': ['pyodbc'],
-        'pymssql': ['pymssql'],
+        'pymssql': ['pymssql==2.3.1'],
     },
     entry_points={
         'console_scripts': [

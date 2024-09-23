@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field
 
 class Settings(BaseSettings):
     DB_DRIVER: str = ''
@@ -11,7 +10,7 @@ class Settings(BaseSettings):
     VERSION_TABLE: str = ''
 
     SOURCE: str = ''
-    BATCH_MODE: str = "no"
+    BATCH_MODE: bool = False
     VERBOSITY: int = 0
     EDITOR: str = ''
     POST_CREATE_COMMAND: str = ''
