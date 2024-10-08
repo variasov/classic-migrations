@@ -35,7 +35,7 @@ setup(
     package_dir={'': 'sources'},
     extras_require={
         'mysql': ['PyMySQL'],
-        'postgres': ['psycopg2-binary=2.9.9'],
+        'postgres': ['psycopg2-binary==2.9.9'],
         'pyodbc': ['pyodbc'],
         'pymssql': ['pymssql==2.3.1'],
     },

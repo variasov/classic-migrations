@@ -28,4 +28,5 @@ Launch Commands:
 
 You can add a comment to the migration in sql format migration files.
 The comment will be saved in the migration history table.
-    -- comment: comment text...
+
+-- comment: comment text...
