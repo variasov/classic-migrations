@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.0.1',
+    version='0.0.2',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -35,9 +35,9 @@ setup(
     package_dir={'': 'sources'},
     extras_require={
         'mysql': ['PyMySQL'],
-        'postgres': ['psycopg2'],
+        'postgres': ['psycopg2-binary=2.9.9'],
         'pyodbc': ['pyodbc'],
-        'pymssql': ['pymssql'],
+        'pymssql': ['pymssql==2.3.1'],
     },
     entry_points={
         'console_scripts': [

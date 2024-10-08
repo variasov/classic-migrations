@@ -18,7 +18,6 @@ import re
 import warnings
 
 import tabulate
-from icecream import ic
 
 from classic.migrations import (
     read_migrations,

@@ -16,9 +16,6 @@ import pathlib
 import logging
 import sys
 
-from classic.migrations.config import CONFIG_FILENAME
-from classic.migrations.scripts.main import save_config
-
 logger = logging.getLogger("classic.migrations")
 
 
@@ -37,18 +34,7 @@ def install_argparsers(global_parser, subparsers):
 
 
 def init(args, config) -> int:
-
-    if args.config:
-        configpath = pathlib.Path(args.config)
-    else:
-        configpath = pathlib.Path.cwd() / CONFIG_FILENAME
     migrations_path = pathlib.Path(args.sources[0]).resolve()
-
-    if configpath.exists():
-        print("Existing configuration file found, exiting", file=sys.stderr)
-        return 1
-    save_config(config, configpath)
-    print(f"Saved configuration to {configpath}")
     if not migrations_path.exists():
         migrations_path.mkdir(exist_ok=True, parents=True)
     print(f"Created migrations directory {migrations_path}")

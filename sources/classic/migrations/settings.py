@@ -1,30 +1,29 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field
 
 class Settings(BaseSettings):
-    DB_DRIVER: str = Field(default="")
-    DB_USER: str = Field(default="")
-    DB_PASSWORD: str = Field(default="")
-    DB_HOST: str = Field(default="")
-    DB_PORT: str = Field(default="")
-    DB_NAME: str = Field(default="")
+    DB_DRIVER: str = ''
+    DB_USER: str = ''
+    DB_PASSWORD: str = ''
+    DB_HOST: str = ''
+    DB_PORT: str = ''
+    DB_NAME: str = ''
     VERSION_TABLE: str = ''
 
-    SOURCE: str = Field(default="")
-    BATCH_MODE: str = Field(default="")
+    SOURCE: str = ''
+    BATCH_MODE: bool = False
     VERBOSITY: int = 0
-    EDITOR: str = Field(default="")
-    POST_CREATE_COMMAND: str = Field(default="")
-    PREFIX: str = Field(default="")
+    EDITOR: str = ''
+    POST_CREATE_COMMAND: str = ''
+    PREFIX: str = ''
 
     @property
     def DATABASE(self) -> str:
         return (
-            f"{self.DB_DRIVER}://{self.DB_USER}"
+            f'{self.DB_DRIVER}://{self.DB_USER}'
             f"{':' if self.DB_PASSWORD else ''}{self.DB_PASSWORD}"
-            f"@{self.DB_HOST}"
+            f'@{self.DB_HOST}'
             f"{':' if self.DB_PORT else ''}{self.DB_PORT}"
-            f"/{self.DB_NAME}"
+            f'/{self.DB_NAME}'
         )
 
     @property

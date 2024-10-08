@@ -25,12 +25,6 @@ from classic.migrations import connections
 from classic.migrations import default_migration_table
 from classic.migrations import logger
 from classic.migrations import utils
-from classic.migrations.config import CONFIG_FILENAME
-from classic.migrations.config import find_config
-from classic.migrations.config import read_config
-from classic.migrations.config import save_config
-from classic.migrations.config import config_changed
-from classic.migrations.config import update_argparser_defaults
 from classic.migrations.settings import Settings
 
 settings = Settings()
@@ -54,7 +48,7 @@ class InvalidArgument(Exception):
 
 def parse_args(
     argv=None,
-) -> t.Tuple[configparser.ConfigParser, argparse.ArgumentParser, argparse.Namespace]:
+) -> t.Tuple[argparse.ArgumentParser, argparse.Namespace]:
     """
     Parse the config file and command line args.
 
@@ -74,25 +68,6 @@ def parse_args(
     # Initial parse to extract --config and any global arguments
     global_args, _ = globalparser.parse_known_args(argv)
 
-    # Read the config file and create a dictionary of defaults for argparser
-    configfile = global_args.config or find_config()
-
-    config = read_config(configfile if global_args.use_config_file else None)
-
-    defaults = {}
-    for argname, getter in config_args.items():
-        try:
-            defaults[argname] = getattr(config, getter)("DEFAULT", argname)
-        except configparser.NoOptionError:
-            pass
-    if "sources" in defaults:
-        defaults["sources"] = defaults["sources"].split()
-    # Set the argparser defaults to values read from the config file
-    update_argparser_defaults(globalparser, defaults)
-    update_argparser_defaults(argparser, defaults)
-    for subp in subparsers.choices.values():
-        update_argparser_defaults(subp, defaults)
-
     # Now parse for real, starting from the top
     args = argparser.parse_args(argv)
     # Update the args namespace with the global args.
@@ -102,7 +77,7 @@ def parse_args(
     # precedence, and overwrites any global args set before the command name.
     args.__dict__.update(globalparser.parse_known_args(argv)[0].__dict__)
 
-    return config, argparser, args
+    return argparser, args
 
 
 def make_argparser():
@@ -261,11 +236,12 @@ def get_backend(args, settings:Settings):
     dburi = dburi or settings.DATABASE
     if dburi is None:
         raise InvalidArgument("Please specify a database uri")
-
+    migration_table = default_migration_table
     try:
         migration_table = args.migration_table
     except AttributeError:
         pass
+
     if len(migration_table)==0:
         migration_table = (
             settings.VERSION_TABLE
@@ -286,46 +262,21 @@ def get_backend(args, settings:Settings):
 
 def main(argv=None):
 
-    config, argparser, args = parse_args(argv)
+    argparser, args = parse_args(argv)
     if getattr(args, "func", None) is None:
         argparser.print_usage(sys.stderr)
         argparser.exit(1)
 
-    # config_is_empty = config.sections() == [] and config.items("DEFAULT") == []
-
-    # sources = getattr(args, "sources", None)
+    args.batch_mode = settings.BATCH_MODE
     verbosity = args.verbosity
     verbosity = min(max_verbosity, max(min_verbosity, verbosity))
     configure_logging(verbosity)
 
-    # if vars(args).get("sources"):
-    #     config.set("DEFAULT", "sources", " ".join(args.sources))
-    # if vars(args).get("database"):
-    #     # ConfigParser requires that any percent signs in the db uri be escaped.
-    #     config.set("DEFAULT", "database", args.database.replace("%", "%%"))
-    # if vars(args).get("migration_table"):
-    #     config.set("DEFAULT", "migration_table", args.migration_table)
-    # config.set(
-    #     "DEFAULT",
-    #     "batch_mode",
-    #     "on" if vars(args).get("batch_mode") else "off",
-    # )
-    # config.set("DEFAULT", "verbosity", str(vars(args).get("verbosity")))
-
-    # if sources:
-        # if upgrade_legacy_config(args, config, sources):
-        # return main(argv)
-
     try:
         if vars(args).get("func"):
-            exitcode = args.func(args,settings) #config
+            exitcode = args.func(args, settings) #config
     except InvalidArgument as e:
         argparser.error(e.args[0])
-
-    # if config_is_empty and args.use_config_file and not args.batch_mode:
-    #     config_file = args.config or CONFIG_FILENAME
-    #     if config_changed(config, config_file):
-    #         prompt_save_config(config, config_file)
 
     return exitcode
 

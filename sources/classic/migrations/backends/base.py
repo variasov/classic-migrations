@@ -134,9 +134,9 @@ class DatabaseBackend:
     log_migration_sql = (
         "INSERT INTO {0.migrations_schema_name_quoted}.{0.log_table_quoted} "
         "(id, migration_hash, migration_id, operation, "
-        "username, hostname, created_at_utc) "
+        "username, hostname, created_at_utc, comment) "
         "VALUES (:id, :migration_hash, :migration_id, "
-        ":operation, :username, :hostname, :created_at_utc)"
+        ":operation, :username, :hostname, :created_at_utc, :comment)"
     )
     create_lock_table_sql = (
         "CREATE TABLE {0.migrations_schema_name_quoted}.{0.lock_table_quoted} ("
@@ -659,7 +659,11 @@ class DatabaseBackend:
             "hostname": socket.getfqdn(),
             "created_at_utc": datetime.utcnow(),
             "operation": operation,
-            "comment": comment,
+            "comment": (comment if comment else
+                            (migration.module.inside_sql_comment
+                             if migration.module.inside_sql_comment else None
+                            )
+                        ),
         }
 
 
