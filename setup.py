@@ -29,7 +29,6 @@ setup(
         'sqlparse',
         'tabulate',
         'importlib_metadata>=3.6.0',
-        'pydantic[dotenv]==2.7.0',
         'pydantic-settings==2.5',
     ],
     package_dir={'': 'sources'},
