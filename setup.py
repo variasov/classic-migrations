@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.0.2',
+    version='0.0.3',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -29,7 +29,6 @@ setup(
         'sqlparse',
         'tabulate',
         'importlib_metadata>=3.6.0',
-        'pydantic[dotenv]==2.7.0',
         'pydantic-settings==2.5',
     ],
     package_dir={'': 'sources'},
