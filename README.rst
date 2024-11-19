@@ -1,32 +1,49 @@
-This project is fork from yoyo-migrations
+Проект является форком yoyo-migrations
 https://ollycope.com/software/yoyo/latest/
 
+Компонент позволяет работать с миграциями баз данных posgtresql и mssql с использованием файлов sql
+
+При установке компонента для миграций в postgres, можно использовать команду
+ pip install classic-migrations[postgres]
+
+для MSSQL
+ pip install classic-migrations[pymssql]
+
+
+Все настройки берутся из переменных окружения или .env файла
 
 .env file:
-    SOURCE=./migrations
-    BATCH_MODE=on|off(default)
-    VERBOSITY=0|1|2|3
-    EDITOR=
-    POST_CREATE_COMMAND=
-    PREFIX=
+ # папка с файлами миграций
+SOURCE=./migrations
+ # пакетный режим исполнения, при котором нет диалоговых вопросов
+BATCH_MODE=on|off(default)
+ # уровень вывода информационных сообщений
+VERBOSITY=0|1|2|3
 
-    DB_DRIVER=pymssql
-    DB_USER=
-    DB_PASSWORD=
-    DB_HOST=
-    DB_PORT=
-    DB_NAME=
-    VERSION_TABLE=
+ # настройки подключения к базе
+ # драйвер
+DB_DRIVER=pymssql|postgres|pyodbc
+ # имя пользователя БД, допустимо в формате <домен>\<пользователь>
+DB_USER=
+# пароль
+DB_PASSWORD=
+ # хост
+DB_HOST=
+ # порт
+DB_PORT=
+ # имя БД
+DB_NAME=
 
 
-Launch Commands:
-    migrations  list
-                new --sql -m 'example of a comment appended to a file name'
-                apply
-                rollback
+Команды запуска:
+
+migrations list
+migrations new --sql -m 'комментарий, который будет добавлен к имени файла'
+migrations apply
+migrations rollback
+
+Для выполнения команды rollback, должен иметься *.sql файл миграции, у которого между именем оригинального фала и расширением имеется вставка .rollback
 
 
-You can add a comment to the migration in sql format migration files.
-The comment will be saved in the migration history table.
-
--- comment: comment text...
+В SQL файле миграции можно указать комментарий, который будет добавлен в таблицу истории миграций.
+-- comment: текст комментария
