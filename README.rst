@@ -6,8 +6,10 @@ classic-migrations
 https://ollycope.com/software/yoyo/latest/
 
 Компонент позволяет работать с миграциями баз данных posgtresql и mssql с использованием файлов sql
+
 Установка
 ---------
+
 При установке компонента для миграций в postgres, можно использовать команду
 
  pip install classic-migrations[postgres]
@@ -18,6 +20,7 @@ https://ollycope.com/software/yoyo/latest/
 
 Настройка
 ---------
+
 Все настройки берутся из переменных окружения или .env файла
 
 .env file:
@@ -38,30 +41,31 @@ VERBOSITY=0|1|2|3
 
 #драйвер
 
-DB_DRIVER=pymssql|postgres|pyodbc
+DATABASE_DRIVER=pymssql|postgres|pyodbc
 
 #имя пользователя БД, допустимо в формате <домен>\<пользователь>
 
-#DB_USER=
+DATABASE_USER=
 
 #пароль
 
-#DB_PASSWORD=
+DATABASE_PASSWORD=
 
 #хост
 
-DB_HOST=
+DATABASE_HOST=
 
 #порт
 
-DB_PORT=
+DATABASE_PORT=
 
 #имя БД
 
-DB_NAME=
+DATABASE_NAME=
 
 Команды запуска
 ---------------
+
 migrations list
 
 migrations new --sql -m 'комментарий, который будет добавлен к имени файла'

@@ -1,12 +1,12 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    DB_DRIVER: str = ''
-    DB_USER: str = ''
-    DB_PASSWORD: str = ''
-    DB_HOST: str = ''
-    DB_PORT: str = ''
-    DB_NAME: str = ''
+    DATABASE_DRIVER: str = ''
+    DATABASE_USER: str = ''
+    DATABASE_PASSWORD: str = ''
+    DATABASE_HOST: str = ''
+    DATABASE_PORT: str = ''
+    DATABASE_NAME: str = ''
     VERSION_TABLE: str = ''
 
     SOURCE: str = ''
@@ -19,11 +19,11 @@ class Settings(BaseSettings):
     @property
     def DATABASE(self) -> str:
         return (
-            f'{self.DB_DRIVER}://{self.DB_USER}'
-            f"{':' if self.DB_PASSWORD else ''}{self.DB_PASSWORD}"
-            f'@{self.DB_HOST}'
-            f"{':' if self.DB_PORT else ''}{self.DB_PORT}"
-            f'/{self.DB_NAME}'
+            f'{self.DATABASE_DRIVER}://{self.DATABASE_USER}'
+            f"{':' if self.DATABASE_PASSWORD else ''}{self.DATABASE_PASSWORD}"
+            f'@{self.DATABASE_HOST}'
+            f"{':' if self.DATABASE_PORT else ''}{self.DATABASE_PORT}"
+            f'/{self.DATABASE_NAME}'
         )
 
     @property
