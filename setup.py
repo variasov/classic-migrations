@@ -30,6 +30,7 @@ setup(
         'tabulate',
         'importlib_metadata>=3.6.0',
         'pydantic-settings~=2.6',
+        'pydantic~=2.10.2',
     ],
     package_dir={'': 'sources'},
     extras_require={
