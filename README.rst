@@ -43,9 +43,13 @@ VERBOSITY=0|1|2|3
 
 DATABASE_DRIVER=pymssql|postgres|pyodbc
 
-#имя пользователя БД, допустимо в формате <домен>\<пользователь>
+#имя пользователя БД
 
 DATABASE_USER=
+
+#домен пользователя БД (опционально)
+
+DATABASE_DOMAIN=
 
 #пароль
 
