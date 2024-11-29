@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.0.5',
+    version='0.0.6',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
