@@ -19,6 +19,7 @@ class SQLiteBackend(DatabaseBackend):
 
     driver_module = "sqlite3"
     list_tables_sql = "SELECT name FROM sqlite_master WHERE type = 'table'"
+    migrations_schema_name = "main"
 
     def connect(self, dburi):
         # Ensure that multiple connections share the same data
