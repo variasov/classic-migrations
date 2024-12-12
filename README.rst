@@ -49,7 +49,7 @@ DATABASE_USER=
 
 #домен пользователя БД (опционально)
 
-DATABASE_DOMAIN=
+DATABASE_USER_DOMAIN=
 
 #пароль
 
