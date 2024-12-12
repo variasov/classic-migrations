@@ -5,7 +5,7 @@ from pydantic import Field
 class Settings(BaseSettings):
     DATABASE_DRIVER: str = ''
     DATABASE_USER_: str = Field(alias='DATABASE_USER', default='')
-    DATABASE_DOMAIN: str = ''
+    DATABASE_USER_DOMAIN: str = ''
     DATABASE_PASSWORD: str = ''
     DATABASE_HOST: str = ''
     DATABASE_PORT: str = ''
@@ -21,8 +21,8 @@ class Settings(BaseSettings):
 
     @property
     def DATABASE_USER(self) -> str:
-        if self.DATABASE_DOMAIN:
-            return f'{self.DATABASE_DOMAIN}\\{self.DATABASE_USER_}'
+        if self.DATABASE_USER_DOMAIN:
+            return f'{self.DATABASE_USER_DOMAIN}\\{self.DATABASE_USER_}'
         return self.DATABASE_USER_
 
     @property
