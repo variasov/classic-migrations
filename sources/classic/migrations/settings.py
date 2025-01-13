@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     def DATABASE(self) -> str:
         return (
             f'{self.DATABASE_DRIVER}://{self.DATABASE_USER}'
-            f"{':' if self.DB_PASSWORD else ''}"
-            f'{quote(self.DB_PASSWORD)}' 
+            f"{':' if self.DATABASE_PASSWORD else ''}"
+            f'{quote(self.DATABASE_PASSWORD)}' 
             f'@{self.DATABASE_HOST}'
             f"{':' if self.DATABASE_PORT else ''}{self.DATABASE_PORT}"
             f'/{self.DATABASE_NAME}'
