@@ -10,12 +10,11 @@ setup(
     author_email='acidos@yandex.ru',
     url='https://github.com/variasov/classic-migrations',
     keywords='migrations migrate database alembic south',
-    license='Apache',
+    license='Apache-2.0',
     classifiers=[
         'Development Status :: 5 - Production/Stable',
         'Environment :: Console',
         'Intended Audience :: Developers',
-        'License :: OSI Approved :: Apache Software License',
         'Operating System :: OS Independent',
         'Topic :: Database',
         'Topic :: Database :: Front-Ends',
