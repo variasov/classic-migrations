@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.0.13',
+    version='0.0.15',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -30,7 +30,7 @@ setup(
         'importlib_metadata>=3.6.0',
         'pydantic-settings~=2.6',
         'pydantic~=2.10.2',
-        'setuptools~=65.0.0',
+        'setuptools~=78.1.0',
     ],
     package_dir={'': 'sources'},
     extras_require={
