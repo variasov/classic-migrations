@@ -271,7 +271,7 @@ def apply(args, settings:Settings) -> int:
 def reapply(args, settings:Settings) -> int:
     backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend)
+        migrations = get_migrations(args, backend, settings)
         backend.rollback_migrations(migrations, args.force)
         migrations = backend.to_apply(migrations)
         backend.apply_migrations(migrations, args.force)
@@ -290,7 +290,7 @@ def develop(args, settings:Settings) -> int:
     args.batch_mode = True
     backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend, "apply")
+        migrations = get_migrations(args, backend, settings, "apply")
         if migrations:
             print(
                 "Applying",
@@ -300,7 +300,7 @@ def develop(args, settings:Settings) -> int:
                 print(f"  [{m.id}]")
             backend.apply_migrations(migrations, args.force)
         else:
-            migrations = get_migrations(args, backend, "rollback")[: args.n]
+            migrations = get_migrations(args, backend, settings, "rollback")[: args.n]
             print(
                 "Reapplying",
                 utils.plural(len(migrations), "%d migration:", "%d migrations:"),
@@ -308,7 +308,7 @@ def develop(args, settings:Settings) -> int:
             for m in migrations:
                 print(f"  [{m.id}]")
             backend.rollback_migrations(migrations, args.force)
-            migrations = get_migrations(args, backend, "apply")
+            migrations = get_migrations(args, backend, settings, "apply")
             backend.apply_migrations(migrations, args.force)
     return 0
 
@@ -316,7 +316,7 @@ def develop(args, settings:Settings) -> int:
 def mark(args, settings:Settings) -> int:
     backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend)
+        migrations = get_migrations(args, backend, settings)
         backend.mark_migrations(migrations)
     return 0
 
@@ -324,7 +324,7 @@ def mark(args, settings:Settings) -> int:
 def unmark(args, settings:Settings) -> int:
     backend = get_backend(args, settings)
     with backend.lock():
-        migrations = get_migrations(args, backend)
+        migrations = get_migrations(args, backend, settings)
         backend.unmark_migrations(migrations)
     return 0
 
