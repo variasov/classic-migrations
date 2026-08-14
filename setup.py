@@ -2,7 +2,7 @@ from setuptools import setup, find_namespace_packages
 
 setup(
     name='classic-migrations',
-    version='0.1b.0',
+    version='0.1b.1',
     description='Database migrations with SQL',
     long_description=open('README.rst').read(),
     long_description_content_type='text/x-rst',
@@ -35,7 +35,7 @@ setup(
     package_dir={'': 'sources'},
     extras_require={
         'mysql': ['PyMySQL'],
-        'postgres': ['psycopg-binary~=3.3'],
+        'postgres': ['psycopg~=3.3', 'psycopg-binary~=3.3'],
         'pyodbc': ['pyodbc'],
         'pymssql': ['pymssql==2.3.1'],
     },
@@ -50,7 +50,6 @@ setup(
             'postgres = classic.migrations.backends.core.postgresql:PostgresqlBackend',
             'postgresql = classic.migrations.backends.core.postgresql:PostgresqlBackend',
             'psql = classic.migrations.backends.core.postgresql:PostgresqlBackend',
-            'postgresql+psycopg = classic.migrations.backends.core.postgresql:PostgresqlPsycopgBackend',
             'mysql = classic.migrations.backends.core.mysql:MySQLBackend',
             'mysql+mysqldb = classic.migrations.backends.core.mysql:MySQLdbBackend',
             'sqlite = classic.migrations.backends.core.sqlite3:SQLiteBackend',

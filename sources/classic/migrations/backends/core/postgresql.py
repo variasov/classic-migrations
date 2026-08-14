@@ -41,7 +41,7 @@ class PostgresqlBackend(DatabaseBackend):
     def TRANSACTION_STATUS_IDLE(self):
         from psycopg.pq import TransactionStatus
 
-        return TransactionStatus.TRANSACTION_STATUS_IDLE
+        return TransactionStatus.IDLE
 
     def connect(self, dburi):
         kwargs = {"dbname": dburi.database, "autocommit": True}
