@@ -27,7 +27,7 @@ class PostgresqlBackend(DatabaseBackend):
     if you need psycopg3.
     """
 
-    driver_module = "psycopg2"
+    driver_module = "psycopg"
     schema = None
     migrations_schema_exists_sql = "SELECT 1 FROM information_schema.schemata WHERE schema_name =  '{0.migrations_schema_name}';"
     list_tables_sql = "SELECT table_name FROM information_schema.tables where table_schema = '{0.migrations_schema_name}';"
@@ -39,9 +39,9 @@ class PostgresqlBackend(DatabaseBackend):
 
     @property
     def TRANSACTION_STATUS_IDLE(self):
-        from psycopg2.extensions import TRANSACTION_STATUS_IDLE
+        from psycopg.pq import TransactionStatus
 
-        return TRANSACTION_STATUS_IDLE
+        return TransactionStatus.TRANSACTION_STATUS_IDLE
 
     def connect(self, dburi):
         kwargs = {"dbname": dburi.database, "autocommit": True}
@@ -102,17 +102,3 @@ class PostgresqlBackend(DatabaseBackend):
                 "PostgreSQL-compatible databases"
             )
         return super().begin()
-
-
-class PostgresqlPsycopgBackend(PostgresqlBackend):
-    """
-    Like PostgresqlBackend, but using the newer Psycopg 3.
-    """
-
-    driver_module = "psycopg"
-
-    @property
-    def TRANSACTION_STATUS_IDLE(self):
-        from psycopg.pq import TransactionStatus
-
-        return TransactionStatus.IDLE
