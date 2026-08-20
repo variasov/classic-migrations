@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,8 +20,6 @@ from classic.migrations.backends.base import DatabaseBackend
 
 
 class SnowflakeBackend(DatabaseBackend):
-
-    driver_module = "snowflake.connector"
 
     def connect(self, dburi):
         database, schema = dburi.database.split("/")
@@ -88,9 +87,6 @@ class SnowflakeBackend(DatabaseBackend):
         )
 
     def savepoint(self, id):
-        pass
-
-    def savepoint_release(self, id):
         pass
 
     def savepoint_rollback(self, id):

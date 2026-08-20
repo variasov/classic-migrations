@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,9 +26,7 @@ class PostgresqlBackend(DatabaseBackend):
     Backend for PostgreSQL and PostgreSQL compatible databases.
     """
 
-    driver_module = "psycopg"
     schema = None
-
     @property
     def TRANSACTION_STATUS_IDLE(self):
         from psycopg.pq import TransactionStatus

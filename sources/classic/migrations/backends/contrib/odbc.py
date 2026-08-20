@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +20,6 @@ from classic.migrations.backends.base import DatabaseBackend
 
 
 class ODBCBackend(DatabaseBackend):
-    driver_module = "pyodbc"
 
     def connect(self, dburi):
         args = [

@@ -1,3 +1,5 @@
+# Copyright 2026 Sergey Variasov
+
 from datetime import datetime
 from datetime import timezone
 
@@ -5,8 +7,6 @@ from classic.migrations.backends.base import DatabaseBackend
 
 
 class PyMSSQLBackend(DatabaseBackend):
-    driver_module = "pymssql"
-    supports_transactional_ddl = True
 
     def connect(self, dburi):
         return self.driver.connect(
@@ -78,12 +78,6 @@ class PyMSSQLBackend(DatabaseBackend):
     def savepoint(self, id):
         """
         Create a new savepoint with the given id
-        """
-        pass
-
-    def savepoint_release(self, id):
-        """
-        Release (commit) the savepoint with the given id
         """
         pass
 

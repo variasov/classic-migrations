@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +20,6 @@ from classic.migrations.backends.base import DatabaseBackend
 
 
 class MySQLBackend(DatabaseBackend):
-
-    driver_module = "pymysql"
-    supports_transactional_ddl = False
 
     def connect(self, dburi):
         kwargs = {"db": dburi.database}
@@ -120,4 +118,4 @@ class MySQLBackend(DatabaseBackend):
 
 
 class MySQLdbBackend(MySQLBackend):
-    driver_module = "MySQLdb"
+    pass

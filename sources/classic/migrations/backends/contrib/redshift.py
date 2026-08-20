@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,9 +19,6 @@ from classic.migrations.backends.core.postgresql import PostgresqlBackend
 class RedshiftBackend(PostgresqlBackend):
     # Redshift does not support ROLLBACK TO SAVEPOINT
     def savepoint(self, id):
-        pass
-
-    def savepoint_release(self, id):
         pass
 
     def savepoint_rollback(self, id):
