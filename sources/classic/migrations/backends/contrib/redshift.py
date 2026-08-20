@@ -12,18 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-from datetime import datetime
-
-from classic.migrations import exceptions
 from classic.migrations.backends.core.postgresql import PostgresqlBackend
 
 
 class RedshiftBackend(PostgresqlBackend):
-    def list_tables(self):
-        current_schema = self.execute("SELECT current_schema()").fetchone()[0]
-        return super(PostgresqlBackend, self).list_tables(schema=current_schema)
-
     # Redshift does not support ROLLBACK TO SAVEPOINT
     def savepoint(self, id):
         pass
@@ -33,30 +25,3 @@ class RedshiftBackend(PostgresqlBackend):
 
     def savepoint_rollback(self, id):
         self.rollback()
-
-    # Redshift does not enforce primary and unique keys
-    def _insert_lock_row(self, pid, timeout, poll_interval=0.5):
-        poll_interval = min(poll_interval, timeout)
-        started = time.time()
-        while True:
-            with self.transaction():
-                # prevents isolation violation errors
-                self.execute("LOCK {}".format(self.lock_table_quoted))
-                cursor = self.execute(
-                    "SELECT pid FROM {}".format(self.lock_table_quoted)
-                )
-                row = cursor.fetchone()
-                if not row:
-                    self.execute(
-                        "INSERT INTO {} (locked, ctime, pid) "
-                        "VALUES (1, :when, :pid)".format(self.lock_table_quoted),
-                        {"when": datetime.utcnow(), "pid": pid},
-                    )
-                    return
-                elif timeout and time.time() > started + timeout:
-                    raise exceptions.LockTimeout(
-                        "Process {} has locked this database "
-                        "(run migrations break-lock to remove this lock)".format(row[0])
-                    )
-                else:
-                    time.sleep(poll_interval)

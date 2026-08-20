@@ -1,60 +1,11 @@
-# Copyright 2015 Oliver Cope
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from collections import namedtuple
-from urllib.parse import parse_qsl
-from urllib.parse import quote
-from urllib.parse import unquote
-from urllib.parse import urlencode
-from urllib.parse import urlsplit
-from urllib.parse import urlunsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
-from classic.migrations.backends import get_backend_class
-from classic.migrations.migrations import default_migration_table
+from classic.migrations.backends.core.sqlite3 import SQLiteBackend
 
-
-_DatabaseURI = namedtuple(
-    "_DatabaseURI", "scheme username password hostname port database args"
+DatabaseURI = namedtuple(
+    "DatabaseURI", "scheme username password hostname port database args"
 )
-
-
-class DatabaseURI(_DatabaseURI):
-    @property
-    def netloc(self):
-        hostname = self.hostname or ""
-        if self.port:
-            hostpart = "{}:{}".format(hostname, self.port)
-        else:
-            hostpart = hostname
-
-        if self.username:
-            return "{}:{}@{}".format(
-                quote(self.username, safe=""),
-                quote(self.password or "", safe=""),
-                hostpart,
-            )
-        else:
-            return hostpart
-
-    def __str__(self):
-        return urlunsplit(
-            (self.scheme, self.netloc, self.database, urlencode(self.args), "")
-        )
-
-    @property
-    def uri(self):
-        return str(self)
 
 
 class BadConnectionURI(Exception):
@@ -63,22 +14,21 @@ class BadConnectionURI(Exception):
     """
 
 
-def get_backend(uri, migration_table=default_migration_table):
+BACKENDS = {
+    "sqlite": SQLiteBackend,
+}
+
+
+def get_backend_class(name):
     """
-    Connect to the given DB uri in the format
-    ``driver://user:pass@host:port/database_name?param=value``,
-    returning a :class:`DatabaseBackend` object
+    Return the backend class registered for the given URI scheme.
     """
-    parsed = parse_uri(uri)
     try:
-        backend_class = get_backend_class(parsed.scheme.lower())
+        return BACKENDS[name.lower()]
     except KeyError:
         raise BadConnectionURI(
-            "Unrecognised database connection scheme %r" % parsed.scheme
+            "Unrecognised database connection scheme %r" % name
         )
-    backend = backend_class(parsed, migration_table)
-    backend.init_database()
-    return backend
 
 
 def parse_uri(s):

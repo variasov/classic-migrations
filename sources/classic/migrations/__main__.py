@@ -1,3 +1,3 @@
-from classic.migrations.scripts.main import main
+from classic.migrations.cli import main
 
 main()

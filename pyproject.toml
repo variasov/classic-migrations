@@ -4,3 +4,57 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "classic-migrations"
+version = "2.0.0"
+description = "Database migrations with SQL"
+readme = "README.rst"
+authors = [
+    { name = "Sergey Variasov", email = "variasov@gmail.com" },
+]
+keywords = ["migrations", "migrate", "database", "alembic", "south"]
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Version Control",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "sqlparse",
+    "tabulate",
+    "pydantic-settings~=2.6",
+    "pydantic~=2.11",
+    "setuptools~=78.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/variasov/classic-migrations"
+
+[project.optional-dependencies]
+mysql = ["PyMySQL"]
+postgres = ["psycopg~=3.3", "psycopg-binary~=3.3"]
+pyodbc = ["pyodbc"]
+pymssql = ["pymssql==2.3.1"]
+
+[project.scripts]
+migrations = "classic.migrations.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.setuptools]
+package-dir = { "" = "sources" }
+
+[tool.setuptools.packages.find]
+where = ["sources"]
+namespaces = true

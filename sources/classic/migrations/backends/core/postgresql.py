@@ -14,6 +14,8 @@
 
 import warnings
 from contextlib import contextmanager
+from datetime import datetime
+from datetime import timezone
 
 from classic.migrations.backends.base import DatabaseBackend
 
@@ -21,21 +23,10 @@ from classic.migrations.backends.base import DatabaseBackend
 class PostgresqlBackend(DatabaseBackend):
     """
     Backend for PostgreSQL and PostgreSQL compatible databases.
-
-    This backend uses psycopg2. See
-    :class:`classic.migrations.backends.core.postgresql.PostgresqlPsycopgBackend`
-    if you need psycopg3.
     """
 
     driver_module = "psycopg"
     schema = None
-    migrations_schema_exists_sql = "SELECT 1 FROM information_schema.schemata WHERE schema_name =  '{0.migrations_schema_name}';"
-    list_tables_sql = "SELECT table_name FROM information_schema.tables where table_schema = '{0.migrations_schema_name}';"
-
-    # list_tables_sql = (
-    #     "SELECT table_name FROM information_schema.tables "
-    #     "WHERE table_schema = :schema"
-    # )
 
     @property
     def TRANSACTION_STATUS_IDLE(self):
@@ -48,10 +39,7 @@ class PostgresqlBackend(DatabaseBackend):
 
         # Default to autocommit mode: without this psycopg sends a BEGIN before
         # every query, causing a warning when we then explicitly start a
-        # transaction. This warning becomes an error in CockroachDB. See
-        # https://todo.sr.ht/~olly/yoyo/71
-        kwargs["autocommit"] = True
-
+        # transaction. This warning becomes an error in CockroachDB.
         kwargs.update(dburi.args)
         if dburi.username is not None:
             kwargs["user"] = dburi.username
@@ -81,8 +69,58 @@ class PostgresqlBackend(DatabaseBackend):
             cursor.execute("SET search_path TO {}".format(self.schema))
 
     def list_tables(self):
-        current_schema = self.execute("SELECT current_schema").fetchone()[0]
-        return super(PostgresqlBackend, self).list_tables(schema=current_schema)
+        cursor = self.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema()"
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def _create_migration_table(self):
+        self.execute(
+            "CREATE TABLE {0} ("
+            "migration_id VARCHAR(255) PRIMARY KEY, "
+            "content_hash VARCHAR(64) NULL, "
+            "applied_at TIMESTAMP NOT NULL, "
+            "comment VARCHAR(255) NULL)".format(self.migration_table_quoted)
+        )
+
+    def _copy_versions(self):
+        self.execute(
+            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
+            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            "FROM {1}".format(self.migration_table_quoted, self.versions_table_quoted)
+        )
+
+    def _applied_migrations(self):
+        cursor = self.execute(
+            "SELECT migration_id, content_hash, applied_at, comment "
+            "FROM {0} ORDER BY applied_at, migration_id".format(
+                self.migration_table_quoted
+            )
+        )
+        return [tuple(row) for row in cursor.fetchall()]
+
+    def mark_applied(self, migration_id, content_hash, comment=None, applied_at=None):
+        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+        self.execute(
+            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
+            "VALUES (%(migration_id)s, %(content_hash)s, %(applied_at)s, "
+            "%(comment)s)".format(self.migration_table_quoted),
+            {
+                "migration_id": migration_id,
+                "content_hash": content_hash,
+                "applied_at": applied_at,
+                "comment": comment,
+            },
+        )
+
+    def unmark(self, migration_id):
+        self.execute(
+            "DELETE FROM {0} WHERE migration_id = %(migration_id)s".format(
+                self.migration_table_quoted
+            ),
+            {"migration_id": migration_id},
+        )
 
     def commit(self):
         # The connection is in autocommit mode and ignores calls to
