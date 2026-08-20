@@ -81,7 +81,7 @@ m.apply()
 
 ```python
 Migrations(
-    source: str | list[str] | None = None,   # каталог(и) миграций (fallback: Settings.SOURCE)
+    source: str | list[str] | None = None,   # каталог(и) миграций (fallback: Settings.SOURCES)
     database: str | None = None,             # URI подключения (fallback: Settings.DATABASE)
     migration_table: str = "migrations",     # имя таблицы истории
     schema: str | None = None,               # схема таблицы (fallback: Settings.MIGRATIONS_SCHEMA, §3.4)
@@ -302,18 +302,19 @@ CREATE TABLE {schema}.{migration_table} (
 
 ## 5. Настройки (.env / переменные окружения)
 
-Существующие (`SOURCE`, `DATABASE_*` и др.) сохраняются. `BATCH_MODE`,
+Существующие (`SOURCES`, `DATABASE_*` и др.) сохраняются. `BATCH_MODE`,
 `VERBOSITY`, `EDITOR`, `POST_CREATE_COMMAND`, `PREFIX` удаляются (не
 используются). Библиотека всегда работает в batch-режиме (интерактивные вопросы
 удалены). Добавляется/уточняется:
 
 | Переменная | Назначение | Значение по умолчанию |
 |-----------|------------|------------------------|
-| `MIGRATION_TABLE` | имя таблицы истории | `migrations` |
+| `SOURCES` | пути к каталогам миграций, разделённые двоеточием | (пусто) |
+| `MIGRATIONS_TABLE` | имя таблицы истории | `migrations` |
 | `MIGRATIONS_SCHEMA` | схема таблицы истории | текущая схема / `public` (§3.4) |
 
-(`VERSION_TABLE` переименовывается в `MIGRATION_TABLE`; старый `VERSION_TABLE`
-остаётся deprecated-алиасом.)
+(`SOURCE` переименовывается в `SOURCES`; `VERSION_TABLE` переименовывается в
+`MIGRATIONS_TABLE` и удаляется без deprecated-алиасов.)
 
 ---
 

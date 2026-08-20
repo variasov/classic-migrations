@@ -19,11 +19,10 @@ class Settings(BaseSettings):
     DATABASE_PORT: str = ""
     DATABASE_NAME: str = ""
 
-    MIGRATION_TABLE: str = ""
+    MIGRATIONS_TABLE: str = ""
     MIGRATIONS_SCHEMA: str = ""
-    VERSION_TABLE: str = ""
 
-    SOURCE: str = ""
+    SOURCES: str = ""
 
     @property
     def DATABASE_USER(self) -> str:
@@ -44,11 +43,11 @@ class Settings(BaseSettings):
 
     @property
     def sources_list(self) -> list[str]:
-        return self.SOURCE.split()
+        return [s for s in self.SOURCES.split(":") if s]
 
     @property
     def migration_table(self) -> str:
-        return self.MIGRATION_TABLE or self.VERSION_TABLE or "migrations"
+        return self.MIGRATIONS_TABLE or "migrations"
 
     @property
     def migrations_schema(self) -> str | None:

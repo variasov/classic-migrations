@@ -9,8 +9,8 @@
   `__init__.py` (`Migrations`, исключения, `__version__`).
 - Только SQL-миграции; Python-миграции и всё связанное удалено.
 - Одна таблица истории (`migration_id`, `content_hash`, `applied_at`, `comment`).
-- Настраиваемые `--migration-table` / `--schema` / `MIGRATION_TABLE` /
-  `MIGRATIONS_SCHEMA` (+ `VERSION_TABLE` как deprecated-алиас).
+- Настраиваемые `--migration-table` / `--schema` / `MIGRATIONS_TABLE` /
+  `MIGRATIONS_SCHEMA`.
 - Сверка хеша тела миграции (`MigrationHashMismatch`), `check_hashes` /
   `--skip-hash-check`, `content_hash = NULL` при отключённой сверке.
 - Хуки `pre/post-apply.sql` и `pre/post-rollback.sql`.
@@ -28,8 +28,8 @@
 ## Отклонения / уточнения сигнатур
 
 1. Конструктор принимает `migration_table=None` (а не `= "migrations"`), чтобы
-   работал fallback из `MIGRATION_TABLE`/`VERSION_TABLE` (см. §5). Итоговое
-   значение по умолчанию — `"migrations"`.
+   работал fallback из `MIGRATIONS_TABLE` (см. §5). Итоговое значение по
+   умолчанию — `"migrations"`.
 2. `rollback` по умолчанию откатывает одну (последнюю) миграцию, если не указаны
    `--revision`/`--all` — раньше это было поведением batch-режима, теперь
    (без интерактивного режима) оно стало безусловным.
