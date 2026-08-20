@@ -35,13 +35,16 @@ class MigrationConflict(Exception):
     """
 
 
+from collections.abc import Iterable
+
+
 class MigrationHashMismatch(Exception):
     """
     One or more already-applied migrations have been modified since they
     were applied.
     """
 
-    def __init__(self, changed):
+    def __init__(self, changed: Iterable[str]) -> None:
         self.changed = list(changed)
         super().__init__(
             "Migrations have changed since they were applied: {}".format(

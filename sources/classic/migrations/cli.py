@@ -35,7 +35,7 @@ min_verbosity = min(verbosity_levels)
 max_verbosity = max(verbosity_levels)
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="migrations")
 
     common = argparse.ArgumentParser(add_help=False)
@@ -49,7 +49,7 @@ def build_parser():
 
     subparsers = parser.add_subparsers(dest="command", required=False)
 
-    def add_match(p):
+    def add_match(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "-m",
             "--match",
@@ -57,7 +57,7 @@ def build_parser():
             metavar="PATTERN",
         )
 
-    def add_revision(p):
+    def add_revision(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "-r",
             "--revision",
@@ -65,7 +65,7 @@ def build_parser():
             metavar="REVISION",
         )
 
-    def add_all_flag(p):
+    def add_all_flag(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "-a",
             "--all",
@@ -75,7 +75,7 @@ def build_parser():
             "they have been previously applied",
         )
 
-    def add_force_flag(p):
+    def add_force_flag(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "-f",
             "--force",
@@ -84,7 +84,7 @@ def build_parser():
             help="Force apply/rollback of steps even if previous steps have failed",
         )
 
-    def add_skip_hash_check(p):
+    def add_skip_hash_check(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "--skip-hash-check",
             dest="skip_hash_check",
@@ -172,8 +172,8 @@ def build_parser():
     return parser
 
 
-def _make_migrations(args):
-    settings = Settings()
+def _make_migrations(args: argparse.Namespace) -> Migrations:
+    settings = Settings()  # type: ignore[call-arg]
     return Migrations(
         sources=settings.sources_list,
         driver=settings.DATABASE_DRIVER,
@@ -186,7 +186,7 @@ def _make_migrations(args):
     )
 
 
-def cmd_apply(args):
+def cmd_apply(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.apply(
         match=args.match,
@@ -199,13 +199,13 @@ def cmd_apply(args):
     return 0
 
 
-def cmd_develop(args):
+def cmd_develop(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.develop(n=args.n, check_hashes=not args.skip_hash_check)
     return 0
 
 
-def cmd_list(args):
+def cmd_list(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     rows = m.list()
     if args.match:
@@ -229,7 +229,7 @@ def cmd_list(args):
     return 0
 
 
-def cmd_rollback(args):
+def cmd_rollback(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.rollback(
         match=args.match,
@@ -240,7 +240,7 @@ def cmd_rollback(args):
     return 0
 
 
-def cmd_reapply(args):
+def cmd_reapply(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.reapply(
         match=args.match,
@@ -251,27 +251,27 @@ def cmd_reapply(args):
     return 0
 
 
-def cmd_mark(args):
+def cmd_mark(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.mark(match=args.match, revision=args.revision, all=args.all)
     return 0
 
 
-def cmd_unmark(args):
+def cmd_unmark(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     m.unmark(match=args.match, revision=args.revision)
     return 0
 
 
-def cmd_new(args):
+def cmd_new(args: argparse.Namespace) -> int:
     m = _make_migrations(args)
     filename = m.new(message=args.message)
     print("Created file", filename)
     return 0
 
 
-def cmd_init(args):
-    settings = Settings()
+def cmd_init(args: argparse.Namespace) -> int:
+    settings = Settings()  # type: ignore[call-arg]
     if not settings.sources_list:
         raise InvalidArgument("No SOURCES configured. Set SOURCES in .env or environment.")
     path = os.path.abspath(settings.sources_list[0])
@@ -280,7 +280,7 @@ def cmd_init(args):
     return 0
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 

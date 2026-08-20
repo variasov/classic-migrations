@@ -53,7 +53,7 @@ def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
     lineending = re.search(r"\n|\r\n|\r", s + "\n").group(0)  # type: ignore
     lines = iter(s.split(lineending))
     directives: DirectivesType = {}
-    sql = []
+    sql: list[str] = []
     for line in lines:
         match = directive_pattern.match(line)
         if match:
@@ -86,7 +86,7 @@ def read_sql(path: str) -> tuple[DirectivesType, list[str]]:
 
 class Migration:
 
-    def __init__(self, id, path, source_dir=None):
+    def __init__(self, id: str, path: str, source_dir: str | None = None) -> None:
         self.id = id
         self.path = path
         self.source_dir = source_dir
@@ -95,13 +95,13 @@ class Migration:
         self.comment = ""
         self.apply_statements: list[str] = []
         self.rollback_statements: list[str] = []
-        self.content_hash = None
+        self.content_hash: str | None = None
         self._loaded = False
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {self.id!r} from {self.path}>"
 
-    def load(self):
+    def load(self) -> None:
         if self._loaded:
             return
 
@@ -125,21 +125,21 @@ class Migration:
         self.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
         self._loaded = True
 
-    def _rollback_path(self):
+    def _rollback_path(self) -> str:
         base, ext = os.path.splitext(self.path)
         return base + ".rollback" + ext
 
 
 class Hook:
 
-    def __init__(self, name, path):
+    def __init__(self, name: str, path: str) -> None:
         self.name = name
         self.path = path
         self.transactional = True
         self.statements: list[str] = []
         self._loaded = False
 
-    def load(self):
+    def load(self) -> None:
         if self._loaded:
             return
         directives, statements = read_sql(self.path)
@@ -221,7 +221,7 @@ class Migrations:
     # Graph helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _load_all(migrations):
+    def _load_all(migrations: Iterable[Migration]) -> None:
         for m in migrations:
             m.load()
 
@@ -253,9 +253,9 @@ class Migrations:
                 result.discard(by_id.get(d))
         return result
 
-    def _ancestors(self, migration, population):
+    def _ancestors(self, migration: Migration, population: Iterable[Migration]) -> set[Migration]:
         by_id = {m.id: m for m in population}
-        deps = set()
+        deps: set[Migration] = set()
         to_process = {by_id[d] for d in migration.depends if d in by_id}
         while to_process:
             m = to_process.pop()
@@ -265,7 +265,7 @@ class Migrations:
                     to_process.add(by_id[d])
         return deps
 
-    def _descendants(self, migration, population):
+    def _descendants(self, migration: Migration, population: Iterable[Migration]) -> set[Migration]:
         population = set(population)
         descendants = {migration}
         descendant_ids = {migration.id}
@@ -281,7 +281,7 @@ class Migrations:
         descendants.remove(migration)
         return descendants
 
-    def _to_revision(self, migrations, revision, direction):
+    def _to_revision(self, migrations: Iterable[Migration], revision: str, direction: str) -> list[Migration]:
         targets = [m for m in migrations if revision in m.id]
         if not targets:
             raise ValueError(f"'{revision}' doesn't match any revisions.")
@@ -298,7 +298,7 @@ class Migrations:
             selected = self._descendants(target, migrations) | {target}
         return [m for m in migrations if m in selected]
 
-    def _filter(self, migrations, match=None, revision=None, direction="apply"):
+    def _filter(self, migrations: Iterable[Migration], match: str | None = None, revision: str | None = None, direction: str = "apply") -> list[Migration]:
         result = list(migrations)
         if match:
             search = re.compile(match).search
@@ -310,7 +310,7 @@ class Migrations:
     # ------------------------------------------------------------------
     # Backend helpers
     # ------------------------------------------------------------------
-    def _get_backend(self):
+    def _get_backend(self) -> "DatabaseBackend":
         backend_class = DatabaseBackend.get_backend_class(self.driver)
         return backend_class(
             db_host=self.db_host,
@@ -323,11 +323,11 @@ class Migrations:
         )
 
     @staticmethod
-    def _applied_ids(backend):
+    def _applied_ids(backend: "DatabaseBackend") -> dict[str, tuple[Any, ...]]:
         return {row[0]: row for row in backend.applied_migrations()}
 
-    def _check_hashes(self, migrations, applied):
-        changed = []
+    def _check_hashes(self, migrations: Iterable[Migration], applied: dict[str, tuple[Any, ...]]) -> None:
+        changed: list[str] = []
         for m in migrations:
             if m.id in applied:
                 stored_hash = applied[m.id][1]
@@ -336,27 +336,27 @@ class Migrations:
         if changed:
             raise exceptions.MigrationHashMismatch(changed)
 
-    def _select_apply(self, migrations, match, revision, all, applied):
+    def _select_apply(self, migrations: Iterable[Migration], match: str | None, revision: str | None, all: bool, applied: dict[str, tuple[Any, ...]]) -> list[Migration]:
         result = self._filter(migrations, match, revision, "apply")
         result = self._topological(result)
         if not all:
             result = [m for m in result if m.id not in applied]
         return result
 
-    def _select_rollback(self, migrations, match, revision, applied):
+    def _select_rollback(self, migrations: Iterable[Migration], match: str | None, revision: str | None, applied: dict[str, tuple[Any, ...]]) -> list[Migration]:
         result = self._filter(migrations, match, revision, "rollback")
         result = [m for m in result if m.id in applied]
         result = list(reversed(self._topological(result)))
         return result
 
-    def _last_applied(self, migrations, applied, n=1):
+    def _last_applied(self, migrations: Iterable[Migration], applied: dict[str, tuple[Any, ...]], n: int = 1) -> list[Migration]:
         ordered = [m for m in self._topological(migrations) if m.id in applied]
         return ordered[-n:] if ordered else []
 
     # ------------------------------------------------------------------
     # Execution helpers
     # ------------------------------------------------------------------
-    def _apply_one(self, backend, migration, force=False):
+    def _apply_one(self, backend: "DatabaseBackend", migration: Migration, force: bool = False) -> None:
         logger.info("Applying %s", migration.id)
         if migration.transactional:
             context = backend.transaction()
@@ -366,7 +366,7 @@ class Migrations:
             for stmt in migration.apply_statements:
                 self._execute_statement(backend, stmt, migration, "apply", force)
 
-    def _rollback_one(self, backend, migration, force=False):
+    def _rollback_one(self, backend: "DatabaseBackend", migration: Migration, force: bool = False) -> None:
         logger.info("Rolling back %s", migration.id)
         if not migration.rollback_statements:
             return
@@ -379,7 +379,7 @@ class Migrations:
                 self._execute_statement(backend, stmt, migration, "rollback", force)
 
     @staticmethod
-    def _execute_statement(backend, stmt, migration, direction, force):
+    def _execute_statement(backend: "DatabaseBackend", stmt: str, migration: Migration, direction: str, force: bool) -> None:
         try:
             cursor = backend.cursor()
             try:
@@ -393,7 +393,7 @@ class Migrations:
             else:
                 raise
 
-    def _run_hooks(self, backend, hooks):
+    def _run_hooks(self, backend: "DatabaseBackend", hooks: list[Hook]) -> None:
         for hook in hooks:
             hook.load()
             if not hook.statements:
@@ -413,7 +413,7 @@ class Migrations:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def list(self):
+    def list(self) -> list[tuple[str, str, str]]:
         backend = self._get_backend()
         try:
             backend.ensure_migration_table()
@@ -428,7 +428,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def is_applied(self, migration_id):
+    def is_applied(self, migration_id: str) -> bool:
         backend = self._get_backend()
         try:
             backend.ensure_migration_table()
@@ -438,13 +438,13 @@ class Migrations:
 
     def apply(
         self,
-        match=None,
-        revision=None,
-        all=False,
-        force=False,
-        one=False,
-        check_hashes=True,
-    ):
+        match: str | None = None,
+        revision: str | None = None,
+        all: bool = False,
+        force: bool = False,
+        one: bool = False,
+        check_hashes: bool = True,
+    ) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -470,7 +470,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def develop(self, n=1, check_hashes=True):
+    def develop(self, n: int = 1, check_hashes: bool = True) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -505,7 +505,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def rollback(self, match=None, revision=None, all=False, force=False):
+    def rollback(self, match: str | None = None, revision: str | None = None, all: bool = False, force: bool = False) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -529,11 +529,11 @@ class Migrations:
 
     def reapply(
         self,
-        match=None,
-        revision=None,
-        force=False,
-        check_hashes=True,
-    ):
+        match: str | None = None,
+        revision: str | None = None,
+        force: bool = False,
+        check_hashes: bool = True,
+    ) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -562,7 +562,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def mark(self, match=None, revision=None, all=False):
+    def mark(self, match: str | None = None, revision: str | None = None, all: bool = False) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -576,7 +576,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def unmark(self, match=None, revision=None):
+    def unmark(self, match: str | None = None, revision: str | None = None) -> None:
         backend = self._get_backend()
         try:
             with backend.lock():
@@ -592,7 +592,7 @@ class Migrations:
         finally:
             backend.close()
 
-    def new(self, message=""):
+    def new(self, message: str = "") -> str:
         sources = self._sources()
         if not sources:
             raise ValueError("Please specify a migrations directory")
@@ -612,13 +612,13 @@ class Migrations:
         return filename
 
 
-def make_filename(directory, message, extension):
+def make_filename(directory: str, message: str, extension: str) -> str:
     lines = (line.strip() for line in message.split("\n"))
     lines = (line for line in lines if line)
-    message = next(lines, None)
+    message_str = next(lines, None) or ""
 
-    if message:
-        slug = "-" + utils.slugify(message)
+    if message_str:
+        slug = "-" + utils.slugify(message_str)
     else:
         slug = ""
 

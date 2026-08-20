@@ -19,12 +19,9 @@ import string
 import unicodedata
 
 
-def get_random_string(length, chars=(string.ascii_letters + string.digits)):
-    """
-    Return a random string of ``length`` characters
-    """
+def get_random_string(length: int, chars: str = string.ascii_letters + string.digits) -> str:
     rng = random.SystemRandom()
-    return "".join(rng.choice(chars) for i in range(length))
+    return "".join(rng.choice(chars) for _ in range(length))
 
 
 def unidecode(s: str) -> str:
@@ -35,7 +32,7 @@ def unidecode(s: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFD", s) if not combining(c))
 
 
-def slugify(message):
+def slugify(message: str) -> str:
     s = unidecode(message)
     s = re.sub(re.compile(r"[^-a-z0-9]+"), "-", s.lower())
     s = re.compile(r"-{2,}").sub("-", s).strip("-")

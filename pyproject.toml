@@ -49,7 +49,9 @@ migrations = "classic.migrations.cli:main"
 
 [dependency-groups]
 dev = [
+    "pyright[nodejs]>=1.1.411",
     "pytest>=9.1.1",
+    "ruff>=0.16.4",
 ]
 
 [tool.setuptools]
