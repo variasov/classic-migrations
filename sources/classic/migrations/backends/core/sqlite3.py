@@ -20,13 +20,11 @@ from datetime import datetime, timezone
 from classic.migrations.backends.base import DatabaseBackend
 
 
-class SQLiteBackend(DatabaseBackend, driver=sqlite3, scheme="sqlite"):
+class SQLiteBackend(DatabaseBackend, driver=sqlite3):
 
-    def connect(self, dburi):
-        # Ensure that multiple connections share the same data
-        # https://sqlite.org/sharedcache.html
+    def connect(self):
         conn = self.driver.connect(
-            f"file:{dburi.database}?cache=shared",
+            f"file:{self.db_name}?cache=shared",
             uri=True,
             detect_types=self.driver.PARSE_DECLTYPES,
         )

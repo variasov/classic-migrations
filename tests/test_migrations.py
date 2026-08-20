@@ -13,12 +13,8 @@ def write_file(path, content):
     return path
 
 
-def make_uri(db_path):
-    return "sqlite:///{}".format(str(db_path).replace("\\", "/"))
-
-
 def make_migrations(source, database, **kwargs):
-    return Migrations(sources=str(source), database=make_uri(database), **kwargs)
+    return Migrations(sources=str(source), driver="sqlite3", db_name=str(database), **kwargs)
 
 
 def db_tables(db_path):
@@ -205,7 +201,7 @@ def test_hooks_run_on_apply_and_rollback(source, db_path):
 
 def test_new_creates_sql_file_with_depends(source):
     write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
-    m = Migrations(sources=str(source), database=None)
+    m = Migrations(sources=str(source), driver="sqlite3")
     filename = m.new(message="add stuff")
 
     assert filename.endswith(".sql")
@@ -214,12 +210,6 @@ def test_new_creates_sql_file_with_depends(source):
         content = file.read()
     assert "-- add stuff" in content
     assert "-- depends: 0001.base" in content
-
-
-def test_new_requires_source(tmp_path):
-    m = Migrations(sources=None, database=None)
-    with pytest.raises(ValueError):
-        m.new(message="x")
 
 
 def test_versions_table_is_migrated(source, db_path):
@@ -248,7 +238,8 @@ def test_custom_migration_table(source, db_path):
     write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
     m = Migrations(
         sources=str(source),
-        database=make_uri(db_path),
+        driver="sqlite3",
+        db_name=str(db_path),
         migration_table="my_history",
     )
     m.apply()
@@ -305,6 +296,6 @@ def test_conflicting_ids_raise(source, db_path):
     sub = source / "sub"
     sub.mkdir()
     write_file(sub / "0001.init.sql", "CREATE TABLE b(id INTEGER);\n")
-    m = Migrations(sources=[str(source), str(sub)], database=make_uri(db_path))
+    m = Migrations(sources=[str(source), str(sub)], driver="sqlite3", db_name=str(db_path))
     with pytest.raises(exceptions.MigrationConflict):
         m.apply()

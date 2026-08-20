@@ -95,55 +95,45 @@ class DatabaseBackend:
     # class by passing the module to the ``driver`` keyword argument.
     driver: Any
 
-    # Schema used for the migration history table when no explicit schema is
-    # given. ``None`` means no schema qualification.
-    default_schema = None
-
     migration_table = "migrations"
     versions_table = "versions"
 
     _in_transaction = False
 
-    def __init_subclass__(cls, driver=None, scheme=None, **kwargs):
+    def __init_subclass__(cls, driver=None, **kwargs):
         super().__init_subclass__(**kwargs)
         if driver is not None:
             cls.driver = driver
-        if scheme is not None:
-            cls.implementations[scheme] = cls
+            cls.implementations[driver.__name__] = cls
 
     @classmethod
     def get_backend_class(cls, name):
-        """
-        Return the backend class registered for the given URI scheme.
-        """
         try:
-            return cls.implementations[name.lower()]
+            return cls.implementations[name]
         except KeyError:
             raise BadConnectionURI(
-                f"Unrecognised database connection scheme {name!r}"
+                f"Unrecognised database driver {name!r}"
             )
 
-    def __init__(self, dburi, migration_table="migrations", schema=None):
-        self.uri = dburi
+    def __init__(self, db_host=None, db_port=None, db_name=None, db_user=None, db_password=None, db_args=None, migration_table="migrations"):
+        self.db_host = db_host
+        self.db_port = db_port
+        self.db_name = db_name
+        self.db_user = db_user
+        self.db_password = db_password
+        self.db_args = db_args or {}
         self.migration_table = migration_table or "migrations"
-        self.schema = schema or self.default_schema
         self.DatabaseError = self.driver.DatabaseError
-        self._connection = self.connect(dburi)
+        self._connection = self.connect()
         self.init_connection(self._connection)
 
     @property
     def migration_table_quoted(self):
-        name = self.quote_identifier(self.migration_table)
-        if self.schema:
-            return f"{self.quote_identifier(self.schema)}.{name}"
-        return name
+        return self.quote_identifier(self.migration_table)
 
     @property
     def versions_table_quoted(self):
-        name = self.quote_identifier(self.versions_table)
-        if self.schema:
-            return f"{self.quote_identifier(self.schema)}.{name}"
-        return name
+        return self.quote_identifier(self.versions_table)
 
     # ------------------------------------------------------------------
     # Query methods.
@@ -229,7 +219,7 @@ class DatabaseBackend:
     def __exit__(self, exc_type, exc_value, traceback):
         self.close()
 
-    def connect(self, dburi):
+    def connect(self):
         raise NotImplementedError()
 
     def quote_identifier(self, s):

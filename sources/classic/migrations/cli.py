@@ -21,6 +21,7 @@ import sys
 
 import tabulate
 from classic.migrations import Migrations
+from classic.migrations.exceptions import InvalidArgument
 from classic.migrations.settings import Settings
 
 verbosity_levels = {
@@ -34,46 +35,16 @@ min_verbosity = min(verbosity_levels)
 max_verbosity = max(verbosity_levels)
 
 
-class InvalidArgument(Exception):
-    pass
-
-
-def configure_logging(level):
-    logging.basicConfig(level=verbosity_levels[level])
-
-
 def build_parser():
     parser = argparse.ArgumentParser(prog="migrations")
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument(
-        "-d",
-        "--database",
-        default=None,
-        help="Database, eg 'sqlite:///path/to/sqlite.db' "
-        "or 'postgresql://user@host/db'",
-    )
-    common.add_argument(
-        "--migration-table",
-        dest="migration_table",
-        default=None,
-        help="Name of table to use for storing migration metadata",
-    )
-    common.add_argument(
-        "--schema",
-        dest="schema",
-        default=None,
-        help="Schema for the migration history table",
-    )
     common.add_argument(
         "-v",
         dest="verbosity",
         action="count",
         default=min_verbosity,
         help="Verbose output. Use multiple times to increase level of verbosity",
-    )
-    common.add_argument(
-        "sources", nargs="*", help="Source directory of migration scripts"
     )
 
     subparsers = parser.add_subparsers(dest="command", required=False)
@@ -204,10 +175,14 @@ def build_parser():
 def _make_migrations(args):
     settings = Settings()
     return Migrations(
-        sources=args.sources or settings.sources_list,
-        database=args.database or settings.DATABASE or None,
-        migration_table=args.migration_table or settings.migration_table,
-        schema=args.schema or settings.migrations_schema,
+        sources=settings.sources_list,
+        driver=settings.DATABASE_DRIVER,
+        db_host=settings.DATABASE_HOST,
+        db_port=settings.DATABASE_PORT,
+        db_name=settings.DATABASE_NAME,
+        db_user=settings.DATABASE_USER,
+        db_password=settings.DATABASE_PASSWORD,
+        migration_table=settings.MIGRATIONS_TABLE,
     )
 
 
@@ -296,9 +271,10 @@ def cmd_new(args):
 
 
 def cmd_init(args):
-    if not args.sources:
-        raise InvalidArgument("Please specify a migrations directory")
-    path = os.path.abspath(args.sources[0])
+    settings = Settings()
+    if not settings.sources_list:
+        raise InvalidArgument("No SOURCES configured. Set SOURCES in .env or environment.")
+    path = os.path.abspath(settings.sources_list[0])
     os.makedirs(path, exist_ok=True)
     print(f"Created migrations directory {path}")
     return 0
@@ -313,7 +289,7 @@ def main(argv=None):
         return 1
 
     verbosity = min(max_verbosity, max(min_verbosity, args.verbosity))
-    configure_logging(verbosity)
+    logging.basicConfig(level=verbosity_levels[verbosity])
 
     try:
         return args.func(args)

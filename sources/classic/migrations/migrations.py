@@ -17,12 +17,12 @@ import datetime
 import hashlib
 import os
 import re
-from collections import OrderedDict, namedtuple
+from collections import OrderedDict
 from collections.abc import Iterable
 from glob import glob
 from graphlib import CycleError, TopologicalSorter
 from logging import getLogger
-from urllib.parse import parse_qsl, unquote, urlsplit
+from typing import Any
 
 import sqlparse
 from classic.migrations import exceptions, utils
@@ -30,16 +30,12 @@ from classic.migrations.backends.base import DatabaseBackend
 
 logger = getLogger("classic.migrations")
 
-DatabaseURI = namedtuple(
-    "DatabaseURI", "scheme username password hostname port database args"
-)
-
 HOOK_NAMES = ("pre-apply", "post-apply", "pre-rollback", "post-rollback")
 
 DirectivesType = dict[str, str]
 
 
-def _is_migration_file(path):
+def _is_migration_file(path: str) -> bool:
     """
     Return True if the given path matches a migration file pattern
     """
@@ -157,22 +153,34 @@ class Migrations:
 
     def __init__(
         self,
-        sources: str | list[str] | None,
-        database: str | None,
+        sources: str | list[str],
+        driver: str,
+        db_host: str | None = None,
+        db_port: int | None = None,
+        db_name: str | None = None,
+        db_user: str | None = None,
+        db_password: str | None = None,
+        db_args: dict[str, Any] | None = None,
         migration_table: str | None = None,
-        schema: str | None = None,
     ):
+        if not sources:
+            raise ValueError("sources must not be empty")
+        if not driver:
+            raise ValueError("driver must not be empty")
         self.sources = sources
-        self.database = database
+        self.driver = driver
+        self.db_host = db_host
+        self.db_port = db_port
+        self.db_name = db_name
+        self.db_user = db_user
+        self.db_password = db_password
+        self.db_args = db_args
         self.migration_table = migration_table or 'migrations'
-        self.schema = schema
 
     # ------------------------------------------------------------------
     # Source reading
     # ------------------------------------------------------------------
     def _sources(self) -> list[str]:
-        if self.sources is None:
-            return []
         if isinstance(self.sources, str):
             return [self.sources]
         return list(self.sources)
@@ -302,29 +310,17 @@ class Migrations:
     # ------------------------------------------------------------------
     # Backend helpers
     # ------------------------------------------------------------------
-    @staticmethod
-    def _parse_uri(s: str):
-        result = urlsplit(s)
-
-        if not result.scheme:
-            raise exceptions.BadConnectionURI(
-                f"No scheme specified in connection URI {s!r}"
-            )
-
-        return DatabaseURI(
-            scheme=result.scheme,
-            username=(unquote(result.username) if result.username is not None else None),
-            password=(unquote(result.password) if result.password is not None else None),
-            hostname=result.hostname,
-            port=result.port,
-            database=result.path[1:] if result.path else None,
-            args=dict(parse_qsl(result.query)),
-        )
-
     def _get_backend(self):
-        parsed = self._parse_uri(self.database)
-        backend_class = DatabaseBackend.get_backend_class(parsed.scheme)
-        return backend_class(parsed, self.migration_table, self.schema)
+        backend_class = DatabaseBackend.get_backend_class(self.driver)
+        return backend_class(
+            db_host=self.db_host,
+            db_port=self.db_port,
+            db_name=self.db_name,
+            db_user=self.db_user,
+            db_password=self.db_password,
+            db_args=self.db_args,
+            migration_table=self.migration_table,
+        )
 
     @staticmethod
     def _applied_ids(backend):
