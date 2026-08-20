@@ -18,8 +18,11 @@
 - `mark` пишет вычисленный `content_hash`; `unmark`/`rollback` удаляют запись.
 - Интерактивный режим удалён (всегда batch): `prompt`/`confirm`/`getch` и
   `BATCH_MODE`/параметр `batch`/флаг `--batch` убраны.
-- Бэкенды — отдельные классы, выбор по схеме URI (статическая таблица в
-  `connections.py`), без entry points.
+- Бэкенды — отдельные классы, выбор по схеме URI без entry points: реестр
+  `DatabaseBackend.implementations` (по схеме — `scheme=` в
+  `__init_subclass__`, напр. `sqlite`) + класс-метод `DatabaseBackend.get_backend_class`.
+  `connections.py` удалён; парсинг URI (`Migrations._parse_uri`) переехал в
+  `migrations.py`.
 - Все SQL-запросы вынесены в бэкенды: базовый класс `DatabaseBackend` не
   содержит SQL (только оркестрацию соединения/транзакций и абстрактные методы
   запросов). Утилита `change_param_style` удалена — каждый бэкенд пишет запросы
@@ -35,6 +38,10 @@
    (без интерактивного режима) оно стало безусловным.
 3. `list()` возвращает список кортежей `(status, id, source)`; таблицу печатает
    CLI.
+4. Объект `Settings` убран из `Migrations` — настройки из `.env`/окружения
+   применяются только в CLI (`cli._make_migrations`). `Migrations` принимает
+   `source`, `database`, `migration_table`, `schema` как есть (без fallback на
+   `Settings`).
 
 ## Блокировка (SQLite)
 

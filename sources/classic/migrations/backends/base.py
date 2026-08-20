@@ -1,6 +1,8 @@
 from contextlib import contextmanager
 from itertools import count
-from typing import Any, ClassVar, Dict, Type
+from typing import Any, ClassVar
+
+from classic.migrations.exceptions import BadConnectionURI
 
 
 class TransactionManager:
@@ -74,9 +76,9 @@ class SavepointTransactionManager(TransactionManager):
 
 class DatabaseBackend:
 
-    # Registry of concrete backends, keyed by the DB-API driver module they
-    # talk to. Populated automatically by ``__init_subclass__``.
-    implementations: ClassVar[Dict[Any, Type["DatabaseBackend"]]] = {}
+    # Registry of concrete backends, keyed by the URI scheme they handle.
+    # Populated automatically by ``__init_subclass__``.
+    implementations: ClassVar[dict[str, type["DatabaseBackend"]]] = {}
 
     # The DB-API driver module this backend uses. Set on each concrete backend
     # class by passing the module to the ``driver`` keyword argument.
@@ -91,11 +93,24 @@ class DatabaseBackend:
 
     _in_transaction = False
 
-    def __init_subclass__(cls, driver=None, **kwargs):
+    def __init_subclass__(cls, driver=None, scheme=None, **kwargs):
         super().__init_subclass__(**kwargs)
         if driver is not None:
             cls.driver = driver
-            cls.implementations[driver] = cls
+        if scheme is not None:
+            cls.implementations[scheme] = cls
+
+    @classmethod
+    def get_backend_class(cls, name):
+        """
+        Return the backend class registered for the given URI scheme.
+        """
+        try:
+            return cls.implementations[name.lower()]
+        except KeyError:
+            raise BadConnectionURI(
+                f"Unrecognised database connection scheme {name!r}"
+            )
 
     def __init__(self, dburi, migration_table="migrations", schema=None):
         self.uri = dburi

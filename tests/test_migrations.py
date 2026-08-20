@@ -18,7 +18,7 @@ def make_uri(db_path):
 
 
 def make_migrations(source, database, **kwargs):
-    return Migrations(source=str(source), database=make_uri(database), **kwargs)
+    return Migrations(sources=str(source), database=make_uri(database), **kwargs)
 
 
 def db_tables(db_path):
@@ -205,7 +205,7 @@ def test_hooks_run_on_apply_and_rollback(source, db_path):
 
 def test_new_creates_sql_file_with_depends(source):
     write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
-    m = Migrations(source=str(source))
+    m = Migrations(sources=str(source), database=None)
     filename = m.new(message="add stuff")
 
     assert filename.endswith(".sql")
@@ -217,7 +217,7 @@ def test_new_creates_sql_file_with_depends(source):
 
 
 def test_new_requires_source(tmp_path):
-    m = Migrations(source=None)
+    m = Migrations(sources=None, database=None)
     with pytest.raises(ValueError):
         m.new(message="x")
 
@@ -247,7 +247,7 @@ def test_versions_table_is_migrated(source, db_path):
 def test_custom_migration_table(source, db_path):
     write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
     m = Migrations(
-        source=str(source),
+        sources=str(source),
         database=make_uri(db_path),
         migration_table="my_history",
     )
@@ -305,6 +305,6 @@ def test_conflicting_ids_raise(source, db_path):
     sub = source / "sub"
     sub.mkdir()
     write_file(sub / "0001.init.sql", "CREATE TABLE b(id INTEGER);\n")
-    m = Migrations(source=[str(source), str(sub)], database=make_uri(db_path))
+    m = Migrations(sources=[str(source), str(sub)], database=make_uri(db_path))
     with pytest.raises(exceptions.MigrationConflict):
         m.apply()

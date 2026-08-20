@@ -2,23 +2,22 @@ import datetime
 import hashlib
 import os
 import re
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from collections.abc import Iterable
 from glob import glob
+from graphlib import CycleError, TopologicalSorter
 from logging import getLogger
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 import sqlparse
-from graphlib import CycleError, TopologicalSorter
-
 from classic.migrations import exceptions, utils
-from classic.migrations.connections import get_backend_class, parse_uri
-from classic.migrations.settings import Settings
+from classic.migrations.backends.base import DatabaseBackend
 
 logger = getLogger("classic.migrations")
 
-hash_function = hashlib.sha256
-
-tempfile_prefix = "_tmp_yoyonew"
+DatabaseURI = namedtuple(
+    "DatabaseURI", "scheme username password hostname port database args"
+)
 
 HOOK_NAMES = ("pre-apply", "post-apply", "pre-rollback", "post-rollback")
 
@@ -30,7 +29,7 @@ def _is_migration_file(path):
     Return True if the given path matches a migration file pattern
     """
     _, extension = os.path.splitext(path)
-    return extension == ".sql" and not path.startswith(tempfile_prefix)
+    return extension == ".sql"
 
 
 def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
@@ -112,7 +111,7 @@ class Migration:
         self.rollback_statements = rollback_statements
 
         body = "\n".join(statements)
-        self.content_hash = hash_function(body.encode("utf-8")).hexdigest()
+        self.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
         self._loaded = True
 
     def _rollback_path(self):
@@ -143,26 +142,25 @@ class Migrations:
 
     def __init__(
         self,
-        source: str | list[str] | None = None,
-        database: str | None = None,
+        sources: str | list[str] | None,
+        database: str | None,
         migration_table: str | None = None,
         schema: str | None = None,
     ):
-        self.settings = Settings()
-        self.source = source if source is not None else self.settings.sources_list
-        self.database = database or self.settings.DATABASE or None
-        self.migration_table = migration_table or self.settings.migration_table
-        self.schema = schema or self.settings.migrations_schema
+        self.sources = sources
+        self.database = database
+        self.migration_table = migration_table or 'migrations'
+        self.schema = schema
 
     # ------------------------------------------------------------------
     # Source reading
     # ------------------------------------------------------------------
     def _sources(self) -> list[str]:
-        if self.source is None:
+        if self.sources is None:
             return []
-        if isinstance(self.source, str):
-            return [self.source]
-        return list(self.source)
+        if isinstance(self.sources, str):
+            return [self.sources]
+        return list(self.sources)
 
     def _expand_sources(self) -> Iterable[str]:
         for source in self._sources():
@@ -289,11 +287,28 @@ class Migrations:
     # ------------------------------------------------------------------
     # Backend helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_uri(s: str):
+        result = urlsplit(s)
+
+        if not result.scheme:
+            raise exceptions.BadConnectionURI(
+                f"No scheme specified in connection URI {s!r}"
+            )
+
+        return DatabaseURI(
+            scheme=result.scheme,
+            username=(unquote(result.username) if result.username is not None else None),
+            password=(unquote(result.password) if result.password is not None else None),
+            hostname=result.hostname,
+            port=result.port,
+            database=result.path[1:] if result.path else None,
+            args=dict(parse_qsl(result.query)),
+        )
+
     def _get_backend(self):
-        if not self.database:
-            raise ValueError("Please specify a database uri")
-        parsed = parse_uri(self.database)
-        backend_class = get_backend_class(parsed.scheme)
+        parsed = self._parse_uri(self.database)
+        backend_class = DatabaseBackend.get_backend_class(parsed.scheme)
         return backend_class(parsed, self.migration_table, self.schema)
 
     @staticmethod

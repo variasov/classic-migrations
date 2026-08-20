@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from classic.migrations.backends.base import DatabaseBackend
 
 
-class SQLiteBackend(DatabaseBackend, driver=sqlite3):
+class SQLiteBackend(DatabaseBackend, driver=sqlite3, scheme="sqlite"):
 
     def connect(self, dburi):
         # Ensure that multiple connections share the same data

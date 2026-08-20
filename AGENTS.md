@@ -55,11 +55,10 @@ uv run pytest tests/test_migrations.py::test_apply_creates_table_and_records
 spec/                                  # спецификация (см. выше)
 sources/classic/migrations/
     __init__.py                        # публичный API: Migrations, исключения, __version__
-    migrations.py                      # класс Migrations + чтение/парсинг SQL + сверка хешей
+    migrations.py                      # класс Migrations + чтение/парсинг SQL + сверка хешей + парсинг URI
     cli.py                             # argparse + main() (отдельно от Migrations)
-    connections.py                     # парсинг URI, выбор класса бэкенда (статический mapping)
     settings.py                        # Settings (pydantic-settings, .env)
-    exceptions.py                      # BadMigration, MigrationConflict, MigrationHashMismatch
+    exceptions.py                      # BadMigration, MigrationConflict, MigrationHashMismatch, BadConnectionURI
     utils.py                           # slugify, get_random_string, unidecode
     backends/
         base.py                        # DatabaseBackend: оркестрация, БЕЗ SQL-запросов
@@ -77,8 +76,10 @@ tests/                                 # pytest; fixtures tmp_path, БД — sql
    публичного (`read_migrations`, `get_backend` и т.п. удалены).
 
 2. **Бэкенды — отдельные классы, по файлу на СУБД.** `Migrations` выбирает
-   бэкенд по схеме URI через статический `BACKENDS` в `connections.py`
-   (сейчас в нём только `sqlite`). Базовый `DatabaseBackend` **не содержит
+   бэкенд по схеме URI (`Migrations._parse_uri`) через реестр
+   `DatabaseBackend.implementations` (ключ — `scheme=` в `__init_subclass__`;
+   сейчас только `sqlite`) и класс-метод `DatabaseBackend.get_backend_class`.
+   Базовый `DatabaseBackend` **не содержит
    SQL** — только управление соединением/транзакциями и абстрактные методы
    запросов. Каждый бэкенд пишет SQL в своём нативном `paramstyle`.
 

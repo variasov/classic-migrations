@@ -1,3 +1,9 @@
+class BadConnectionURI(Exception):
+    """
+    An invalid connection URI
+    """
+
+
 class BadMigration(Exception):
     """
     The migration file could not be compiled

@@ -6,6 +6,7 @@ import sys
 
 import tabulate
 from classic.migrations import Migrations
+from classic.migrations.settings import Settings
 
 verbosity_levels = {
     0: logging.ERROR,
@@ -186,11 +187,12 @@ def build_parser():
 
 
 def _make_migrations(args):
+    settings = Settings()
     return Migrations(
-        source=args.sources or None,
-        database=args.database,
-        migration_table=args.migration_table,
-        schema=args.schema,
+        sources=args.sources or settings.sources_list,
+        database=args.database or settings.DATABASE or None,
+        migration_table=args.migration_table or settings.migration_table,
+        schema=args.schema or settings.migrations_schema,
     )
 
 
