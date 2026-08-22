@@ -59,17 +59,26 @@ SQLite механизм не задан. Реализовано удержани
   (DDL в SQLite всегда транзакционный), `disable_transactions` — no-op;
 - явные `commit()` в цикле применения убраны — финальный коммит делает lock.
 
+## Реализовано (PostgreSQL)
+
+- Бэкенд `PsycopgBackend` (`backends/core/psycopg.py`) на psycopg 3:
+  `%s` paramstyle, `autocommit=True`, нативный `lock()` через
+  `pg_advisory_lock`/`pg_try_advisory_lock` с ключом от хеша
+  `migration_table`, `disable_transactions` (no-op: autocommit и так
+  включён), `commit()`/`rollback()` через SQL (не через методы psycopg).
+  `list_tables` через `information_schema.tables`.
+
 ## Отложено (прочие бэкенды)
 
 - Резолв схемы по умолчанию («текущая схема», PostgreSQL `current_schema()`,
   MSSQL `SCHEMA_NAME()`) не реализован: у всех бэкендов `default_schema=None`
   (без квалификатора). Нужно при добавлении остальных бэкендов.
-- Нативные `lock()` для PostgreSQL/MSSQL/Oracle/ODBC/Redshift/Snowflake не
+- Нативные `lock()` для MSSQL/Oracle/ODBC/Redshift/Snowflake не
   реализованы (base-класс бросает `NotImplementedError`).
 - SQL-запросы (создание таблицы, выборка, `INSERT`/`DELETE` отметок, листинг
-  таблиц, перенос из `versions`) написаны для всех бэкендов в их нативном
-  `paramstyle`, но **проверены только на SQLite**; остальные подлежат проверке
-  при подключении соответствующих СУБД.
+  таблиц, перенос из `versions`) написаны для оставшихся бэкендов в их нативном
+  `paramstyle`, но **проверены только на SQLite и PostgreSQL**; остальные
+  подлежат проверке при подключении соответствующих СУБД.
 
 ## Прочее
 

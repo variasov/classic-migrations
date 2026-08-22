@@ -99,7 +99,7 @@ class DatabaseBackend:
     driver: Any
 
     migration_table = "migrations"
-    versions_table = "versions"
+    versions_table = "versions"  # Need for migrate old yoyo tables
 
     _in_transaction = False
 

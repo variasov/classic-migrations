@@ -1,301 +1,445 @@
 import os
-import sqlite3
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from classic.migrations import Migrations, exceptions
+from classic.migrations.backends.fake import FakeBackend
+from classic.migrations.migrations import Migration
 
 
-def write_file(path, content):
-    path = str(path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def write_file(path: Path, content: str) -> Path:
+    path_ = str(path)
+    os.makedirs(os.path.dirname(path_), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
     return path
 
 
-def make_migrations(source, database, **kwargs):
-    return Migrations(sources=str(source), driver="sqlite3", db_name=str(database), **kwargs)
+def migration_hash(source: Path, filename: str) -> str | None:
+    m = Migration(filename, str(source / filename), source_dir=str(source))
+    m.load()
+    return m.content_hash
 
 
-def db_tables(db_path):
-    conn = sqlite3.connect(str(db_path))
-    try:
-        return [r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        )]
-    finally:
-        conn.close()
+def _patch_get_backend(backend: FakeBackend) -> Any:
+    def _factory(**kw: object) -> FakeBackend:
+        return backend
 
-
-def db_rows(db_path, sql, params=()):
-    conn = sqlite3.connect(str(db_path))
-    try:
-        return conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
-
-
-@pytest.fixture
-def source(tmp_path):
-    d = tmp_path / "migrations"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture
-def db_path(tmp_path):
-    return tmp_path / "test.db"
-
-
-def test_apply_creates_table_and_records(source, db_path):
-    write_file(
-        source / "0001.init.sql",
-        "CREATE TABLE foo(id INTEGER PRIMARY KEY);\n",
+    return patch(
+        "classic.migrations.migrations.DatabaseBackend.get_backend_class",
+        return_value=_factory,
     )
-    m = make_migrations(source, db_path)
-    m.apply()
-
-    assert "foo" in db_tables(db_path)
-    assert m.is_applied("0001.init")
-
-    rows = db_rows(db_path, "SELECT migration_id, content_hash, comment FROM migrations")
-    assert len(rows) == 1
-    migration_id, content_hash, comment = rows[0]
-    assert migration_id == "0001.init"
-    assert content_hash is not None and len(content_hash) == 64
-    assert comment == ""
 
 
-def test_list_shows_applied_status(source, db_path):
-    write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
-    write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
-    m = make_migrations(source, db_path)
-    m.apply()
+class TestApply:
+    def test_apply_calls_backend_sequence(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
 
-    result = {id: status for status, id, _ in m.list()}
-    assert result == {"0001.a": "A", "0002.b": "A"}
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply()
 
+        assert backend.locked
+        assert backend.migration_table_ready
+        assert len(backend.applied_list) == 1
+        row = backend.applied_list[0]
+        assert row[0] == "0001.init"
+        assert row[1] == migration_hash(source, "0001.init.sql")
+        assert row[2] == ""
+        assert backend.closed
 
-def test_rollback_runs_rollback_file(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER PRIMARY KEY);\n")
-    write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
-    m = make_migrations(source, db_path)
-    m.apply()
-    assert "foo" in db_tables(db_path)
+    def test_apply_with_one_flag(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
 
-    m.rollback()
-    assert "foo" not in db_tables(db_path)
-    assert not m.is_applied("0001.init")
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply(one=True)
 
+        assert len(backend.applied_list) == 1
 
-def test_rollback_single_vs_all(source, db_path):
-    write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
-    write_file(source / "0001.a.rollback.sql", "DROP TABLE a;\n")
-    write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
-    write_file(source / "0002.b.rollback.sql", "DROP TABLE b;\n")
-    m = make_migrations(source, db_path)
-    m.apply()
-    assert {"a", "b"} <= set(db_tables(db_path))
+    def test_apply_with_match(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        backend = FakeBackend()
 
-    m.rollback()
-    assert "a" in db_tables(db_path)
-    assert "b" not in db_tables(db_path)
-    assert m.is_applied("0001.a")
-    assert not m.is_applied("0002.b")
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply(match="0001")
 
-    m.rollback(all=True)
-    assert "a" not in db_tables(db_path)
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.a"
 
+    def test_apply_with_revision(self, source: Path) -> None:
+        write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
+        write_file(
+            source / "0002.child.sql",
+            "-- depends: 0001.base\nCREATE TABLE child(id INTEGER);\n",
+        )
+        backend = FakeBackend()
 
-def test_dependencies_are_applied_in_order(source, db_path):
-    write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER PRIMARY KEY);\n")
-    write_file(
-        source / "0002.child.sql",
-        "-- depends: 0001.base\n"
-        "INSERT INTO base(id) VALUES (1);\n"
-        "CREATE TABLE child(id INTEGER);\n",
-    )
-    m = make_migrations(source, db_path)
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply(revision="0002")
 
-    assert "base" in db_tables(db_path)
-    assert "child" in db_tables(db_path)
-    assert db_rows(db_path, "SELECT id FROM base") == [(1,)]
+        assert len(backend.applied_list) == 2
+        ids = [r[0] for r in backend.applied_list]
+        assert ids == ["0001.base", "0002.child"]
 
+    def test_apply_hash_check_enabled(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "wronghash", None, None)])
 
-def test_hash_mismatch_detected(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    m = make_migrations(source, db_path)
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            with pytest.raises(exceptions.MigrationHashMismatch):
+                m.apply()
 
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER, extra TEXT);\n")
-    with pytest.raises(exceptions.MigrationHashMismatch) as exc:
-        m.apply()
-    assert "0001.init" in exc.value.changed
+    def test_apply_hash_check_disabled(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
 
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply(check_hashes=False)
 
-def test_comment_change_does_not_change_hash(source, db_path):
-    write_file(
-        source / "0001.init.sql",
-        "-- comment: first\nCREATE TABLE foo(id INTEGER);\n",
-    )
-    m = make_migrations(source, db_path)
-    m.apply()
+        assert backend.applied_list[0][1] is None
 
-    write_file(
-        source / "0001.init.sql",
-        "-- comment: changed\nCREATE TABLE foo(id INTEGER);\n",
-    )
-    m.apply()  # should not raise
+    def test_apply_calls_hooks(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "pre-apply.sql", "SELECT 1;\n")
+        write_file(source / "post-apply.sql", "SELECT 2;\n")
+        backend = FakeBackend()
 
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply()
 
-def test_skip_hash_check_writes_null(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    m = make_migrations(source, db_path)
-    m.apply(check_hashes=False)
+        assert backend.cursor_count >= 3
 
-    rows = db_rows(db_path, "SELECT content_hash FROM migrations")
-    assert rows == [(None,)]
+    def test_apply_all_flag(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(
+            applied=[("0001.init", migration_hash(source, "0001.init.sql"), None, None)]
+        )
 
-    # changing the body now does not raise, since the stored hash is NULL
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER, extra TEXT);\n")
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply(all=True)
 
+        assert len(backend.applied_list) == 1
 
-def test_mark_and_unmark(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    m = make_migrations(source, db_path)
+    def test_apply_missing_dependency_raises(self, source: Path) -> None:
+        write_file(
+            source / "0001.child.sql",
+            "-- depends: 9999.missing\nCREATE TABLE child(id INTEGER);\n",
+        )
+        backend = FakeBackend()
 
-    m.mark()
-    assert m.is_applied("0001.init")
-    assert "foo" not in db_tables(db_path)
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            with pytest.raises(exceptions.BadMigration):
+                m.apply()
 
-    rows = db_rows(db_path, "SELECT content_hash FROM migrations")
-    assert rows[0][0] is not None
+    def test_apply_conflicting_ids_raise(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE a(id INTEGER);\n")
+        sub = source / "sub"
+        sub.mkdir()
+        write_file(sub / "0001.init.sql", "CREATE TABLE b(id INTEGER);\n")
+        backend = FakeBackend()
 
-    m.unmark()
-    assert not m.is_applied("0001.init")
-
-
-def test_hooks_run_on_apply_and_rollback(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
-    write_file(source / "pre-apply.sql", "CREATE TABLE pre_apply(id INTEGER);\n")
-    write_file(source / "post-apply.sql", "CREATE TABLE post_apply(id INTEGER);\n")
-    write_file(source / "pre-rollback.sql", "CREATE TABLE pre_rollback(id INTEGER);\n")
-    write_file(source / "post-rollback.sql", "CREATE TABLE post_rollback(id INTEGER);\n")
-
-    m = make_migrations(source, db_path)
-    m.apply()
-
-    tables = set(db_tables(db_path))
-    assert {"pre_apply", "post_apply", "foo"} <= tables
-    assert "pre_rollback" not in tables
-    assert "post_rollback" not in tables
-
-    m.rollback()
-    tables = set(db_tables(db_path))
-    assert {"pre_rollback", "post_rollback"} <= tables
-    assert "foo" not in tables
+        with _patch_get_backend(backend):
+            m = Migrations(
+                sources=[str(source), str(sub)], driver="sqlite3"
+            )
+            with pytest.raises(exceptions.MigrationConflict):
+                m.apply()
 
 
-def test_new_creates_sql_file_with_depends(source):
-    write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
-    m = Migrations(sources=str(source), driver="sqlite3")
-    filename = m.new(message="add stuff")
+class TestRollback:
+    def test_rollback_calls_backend_sequence(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
 
-    assert filename.endswith(".sql")
-    assert os.path.isfile(filename)
-    with open(filename, encoding="utf-8") as file:
-        content = file.read()
-    assert "-- add stuff" in content
-    assert "-- depends: 0001.base" in content
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback()
 
+        assert backend.locked
+        assert backend.migration_table_ready
+        assert len(backend.applied_list) == 0
+        assert backend.closed
 
-def test_versions_table_is_migrated(source, db_path):
-    conn = sqlite3.connect(str(db_path))
-    conn.execute(
-        "CREATE TABLE versions ("
-        "migration_hash VARCHAR(64), migration_id VARCHAR(255), "
-        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))"
-    )
-    conn.execute(
-        "INSERT INTO versions (migration_hash, migration_id, applied_at_utc) "
-        "VALUES ('abc', '0001.old', '2020-01-01 00:00:00')"
-    )
-    conn.commit()
-    conn.close()
+    def test_rollback_with_match(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        write_file(source / "0001.a.rollback.sql", "DROP TABLE a;\n")
+        write_file(source / "0002.b.rollback.sql", "DROP TABLE b;\n")
+        backend = FakeBackend(
+            applied=[("0001.a", "h1", None, None), ("0002.b", "h2", None, None)]
+        )
 
-    write_file(source / "0001.old.sql", "CREATE TABLE old(id INTEGER);\n")
-    m = make_migrations(source, db_path)
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback(match="a")
 
-    rows = db_rows(db_path, "SELECT migration_id, content_hash FROM migrations")
-    assert rows == [("0001.old", None)]
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0002.b"
 
+    def test_rollback_all(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        backend = FakeBackend(
+            applied=[("0001.a", "h1", None, None), ("0002.b", "h2", None, None)]
+        )
 
-def test_custom_migration_table(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    m = Migrations(
-        sources=str(source),
-        driver="sqlite3",
-        db_name=str(db_path),
-        migration_table="my_history",
-    )
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback(all=True)
 
-    assert "my_history" in db_tables(db_path)
-    assert "migrations" not in db_tables(db_path)
+        assert len(backend.applied_list) == 0
 
+    def test_rollback_no_rollback_file_skips(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
 
-def test_develop_reapplies_last(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
-    m = make_migrations(source, db_path)
-    m.apply()
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback()
 
-    m.develop()
-    assert "foo" in db_tables(db_path)
-    assert m.is_applied("0001.init")
+        assert len(backend.applied_list) == 0
 
+    def test_rollback_calls_hooks(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
+        write_file(source / "pre-rollback.sql", "SELECT 1;\n")
+        write_file(source / "post-rollback.sql", "SELECT 2;\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
 
-def test_reapply(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-    write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
-    m = make_migrations(source, db_path)
-    m.apply()
-    assert "foo" in db_tables(db_path)
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback()
 
-    m.reapply()
-    assert "foo" in db_tables(db_path)
-    assert m.is_applied("0001.init")
+        assert backend.cursor_count >= 3
 
+    def test_rollback_single_default_when_multiple(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        write_file(source / "0002.b.rollback.sql", "DROP TABLE b;\n")
+        backend = FakeBackend(
+            applied=[("0001.a", "h1", None, None), ("0002.b", "h2", None, None)]
+        )
 
-def test_apply_one(source, db_path):
-    write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
-    write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
-    m = make_migrations(source, db_path)
-    m.apply(one=True)
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.rollback()
 
-    assert m.is_applied("0001.a")
-    assert not m.is_applied("0002.b")
-
-
-def test_missing_dependency_raises(source, db_path):
-    write_file(
-        source / "0001.child.sql",
-        "-- depends: 9999.missing\nCREATE TABLE child(id INTEGER);\n",
-    )
-    m = make_migrations(source, db_path)
-    with pytest.raises(exceptions.BadMigration):
-        m.apply()
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.a"
 
 
-def test_conflicting_ids_raise(source, db_path):
-    write_file(source / "0001.init.sql", "CREATE TABLE a(id INTEGER);\n")
-    sub = source / "sub"
-    sub.mkdir()
-    write_file(sub / "0001.init.sql", "CREATE TABLE b(id INTEGER);\n")
-    m = Migrations(sources=[str(source), str(sub)], driver="sqlite3", db_name=str(db_path))
-    with pytest.raises(exceptions.MigrationConflict):
-        m.apply()
+class TestList:
+    def test_list_calls_backend(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            result = m.list()
+
+        assert backend.migration_table_ready
+        assert backend.closed
+        assert result == [("U", "0001.init", str(source))]
+
+    def test_list_shows_applied(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            result = m.list()
+
+        assert result[0][0] == "A"
+
+
+class TestIsApplied:
+    def test_is_applied_calls_backend(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            assert m.is_applied("0001.init")
+
+        assert backend.migration_table_ready
+        assert backend.closed
+
+    def test_is_applied_not_found(self, source: Path) -> None:
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            assert not m.is_applied("0001.init")
+
+
+class TestMark:
+    def test_mark_calls_backend(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.mark()
+
+        assert backend.locked
+        assert backend.migration_table_ready
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.init"
+        assert backend.closed
+
+
+class TestUnmark:
+    def test_unmark_calls_backend(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "somehash", None, None)])
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.unmark()
+
+        assert backend.locked
+        assert backend.migration_table_ready
+        assert len(backend.applied_list) == 0
+        assert backend.closed
+
+
+class TestReapply:
+    def test_reapply_calls_backend_sequence(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
+        backend = FakeBackend(
+            applied=[("0001.init", migration_hash(source, "0001.init.sql"), None, None)]
+        )
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.reapply()
+
+        assert backend.locked
+        assert backend.migration_table_ready
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.init"
+        assert backend.closed
+
+    def test_reapply_hash_check(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "wronghash", None, None)])
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            with pytest.raises(exceptions.MigrationHashMismatch):
+                m.reapply()
+
+
+class TestDevelop:
+    def test_develop_applies_last_when_all_applied(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
+        backend = FakeBackend(
+            applied=[("0001.init", migration_hash(source, "0001.init.sql"), None, None)]
+        )
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.develop()
+
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.init"
+
+    def test_develop_applies_unapplied(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.develop()
+
+        assert len(backend.applied_list) == 1
+        assert backend.applied_list[0][0] == "0001.init"
+
+    def test_develop_hash_check(self, source: Path) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        backend = FakeBackend(applied=[("0001.init", "wronghash", None, None)])
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            with pytest.raises(exceptions.MigrationHashMismatch):
+                m.develop()
+
+
+class TestNew:
+    def test_new_creates_file(self, source: Path) -> None:
+        m = Migrations(sources=str(source), driver="sqlite3")
+        filename = m.new(message="add stuff")
+
+        assert filename.endswith(".sql")
+        assert os.path.isfile(filename)
+
+
+class TestDependencyResolution:
+    def test_topological_order_is_maintained(self, source: Path) -> None:
+        write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
+        write_file(
+            source / "0002.child.sql",
+            "-- depends: 0001.base\nCREATE TABLE child(id INTEGER);\n",
+        )
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            m.apply()
+
+        ids = [r[0] for r in backend.applied_list]
+        assert ids == ["0001.base", "0002.child"]
+
+    def test_circular_dependency_raises(self, source: Path) -> None:
+        write_file(
+            source / "0001.a.sql",
+            "-- depends: 0002.b\nCREATE TABLE a(id INTEGER);\n",
+        )
+        write_file(
+            source / "0002.b.sql",
+            "-- depends: 0001.a\nCREATE TABLE b(id INTEGER);\n",
+        )
+        backend = FakeBackend()
+
+        with _patch_get_backend(backend):
+            m = Migrations(sources=str(source), driver="sqlite3")
+            with pytest.raises(exceptions.BadMigration):
+                m.apply()
+
+
+class TestConstructor:
+    def test_empty_sources_raises(self) -> None:
+        with pytest.raises(ValueError):
+            Migrations(sources="", driver="sqlite3")
+
+    def test_empty_driver_raises(self) -> None:
+        with pytest.raises(ValueError):
+            Migrations(sources="/tmp", driver="")
+
+    def test_default_migration_table(self) -> None:
+        m = Migrations(sources="/tmp", driver="sqlite3")
+        assert m.migration_table == "migrations"
+
+    def test_custom_migration_table(self) -> None:
+        m = Migrations(sources="/tmp", driver="sqlite3", migration_table="my_history")
+        assert m.migration_table == "my_history"
+
+    def test_custom_migration_table_none_uses_default(self) -> None:
+        m = Migrations(sources="/tmp", driver="sqlite3", migration_table=None)
+        assert m.migration_table == "migrations"

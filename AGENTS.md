@@ -41,10 +41,18 @@ uv run pytest
 Отдельный тест:
 
 ```powershell
-uv run pytest tests/test_migrations.py::test_apply_creates_table_and_records
+uv run pytest tests/test_migrations.py::TestApply::test_apply_calls_backend_sequence
 ```
 
-Линтер/тайпчекер в проекте не настроены — нет соответствующих команд.
+Линтер — **ruff**, тайпчекер — **pyright**. Конфигурация в `pyproject.toml`
+(ruff) и `pyrightconfig.json`. Запуск:
+
+```powershell
+uv run ruff check sources/ tests/
+uv run pyright
+```
+
+Тесты тоже должны проходить линтер и тайпчекинг без ошибок.
 
 Пакет ставится из `sources/` (`setup.py`, `package_dir={'': 'sources'}`),
 точка входа `migrations = classic.migrations.cli:main`.
@@ -55,7 +63,7 @@ uv run pytest tests/test_migrations.py::test_apply_creates_table_and_records
 spec/                                  # спецификация (см. выше)
 sources/classic/migrations/
     __init__.py                        # публичный API: Migrations, исключения, __version__
-    migrations.py                      # класс Migrations + чтение/парсинг SQL + сверка хешей + парсинг URI
+    migrations.py                      # класс Migrations + чтение/парсинг SQL + сверка хешей
     cli.py                             # argparse + main() (отдельно от Migrations)
     settings.py                        # Settings (pydantic-settings, .env)
     exceptions.py                      # BadMigration, MigrationConflict, MigrationHashMismatch, BadConnectionURI
@@ -66,7 +74,12 @@ sources/classic/migrations/
         core/postgresql.py             # не проверены
         core/mysql.py                  # не проверены
         contrib/*.py                   # pymssql/odbc/oracle/redshift/snowflake — не проверены
-tests/                                 # pytest; fixtures tmp_path, БД — sqlite:///
+tests/
+    conftest.py                        # фикстуры source (tmp_path) и db_path (tmp_path)
+    test_cli.py                        # тесты CLI: парсинг аргументов + cmd_* с Mock(Migrations)
+    test_migrations.py                 # тесты Migrations с Mock(DatabaseBackend)
+    backends/
+        test_sqlite3.py                # тесты SQLiteBackend с реальной SQLite БД
 ```
 
 ## Ключевые архитектурные правила
@@ -76,9 +89,9 @@ tests/                                 # pytest; fixtures tmp_path, БД — sql
    публичного (`read_migrations`, `get_backend` и т.п. удалены).
 
 2. **Бэкенды — отдельные классы, по файлу на СУБД.** `Migrations` выбирает
-   бэкенд по схеме URI (`Migrations._parse_uri`) через реестр
-   `DatabaseBackend.implementations` (ключ — `scheme=` в `__init_subclass__`;
-   сейчас только `sqlite`) и класс-метод `DatabaseBackend.get_backend_class`.
+   бэкенд по имени драйвера через реестр
+   `DatabaseBackend.implementations` (ключ — `driver.__name__` в `__init_subclass__`;
+   сейчас только `sqlite3`) и класс-метод `DatabaseBackend.get_backend_class`.
    Базовый `DatabaseBackend` **не содержит
    SQL** — только управление соединением/транзакциями и абстрактные методы
    запросов. Каждый бэкенд пишет SQL в своём нативном `paramstyle`.
@@ -108,16 +121,41 @@ tests/                                 # pytest; fixtures tmp_path, БД — sql
   `str.format(...)` вместо f-строк и строковые докстрины. Новый код пиши в том
   же стиле, что и окружающий, но f-строки допустимы.
 - Комментарии в коде — только где действительно нужны (не добавляй лишних).
-- Миграционные SQL-файлы в тестах создаются вспомогательными функциями
-  (`write_file`, `make_migrations` в `tests/test_migrations.py`).
+- Миграционные SQL-файлы в тестах создаются вспомогательной функцией
+  `write_file` (в `tests/test_migrations.py`).
+
+## Структура тестов
+
+Тесты разделены по слоям:
+
+- **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы `cmd_*`.
+  `Migrations` подменяется `Mock`, проверяется что вызываются правильные
+  методы с правильными параметрами (`assert_called_once_with(...)`).
+  Настоящие миграции и БД не используются.
+
+- **`tests/test_migrations.py`** — тесты класса `Migrations`.
+  `DatabaseBackend.get_backend_class` патчится, возвращая `Mock`-бэкенд.
+  Проверяется последовательность вызовов (`lock` → `ensure_migration_table` →
+  `mark_applied`/`unmark` → `close`), фильтрация (`match`, `revision`, `all`,
+  `one`), сверка хешей, разрешение зависимостей.
+
+- **`tests/backends/test_sqlite3.py`** — тесты `SQLiteBackend` с реальной
+  SQLite БД (через `tmp_path`). Проверяется создание таблицы, `mark_applied` /
+  `unmark` / `is_applied`, порядок выборки, `_copy_versions`, лок и
+  транзакции. Для каждого будущего бэкенда должен быть аналогичный файл
+  в `tests/backends/`.
+
+Фикстуры `source` и `db_path` — в `tests/conftest.py`.
 
 ## Проверка изменений
 
 После правок обязательно:
 
 ```powershell
+uv run ruff check sources/ tests/
+uv run pyright
 uv run pytest
 ```
 
-Все тесты должны проходить. Новую функциональность покрывай тестами в
-`tests/test_migrations.py` по образцу существующих (SQLite через `sqlite:///`).
+Все тесты должны проходить, ruff и pyright — без ошибок. Новую
+функциональность покрывай тестами в соответствующем слое по образцу существующих.
