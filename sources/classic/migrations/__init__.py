@@ -18,6 +18,7 @@ from classic.migrations.exceptions import (
     BadMigration,
     InvalidArgument,
     MigrationConflict,
+    MigrationLockError,
     NoMigration,
 )
 from classic.migrations.migrations import MigrationsCollection
@@ -30,6 +31,7 @@ __all__ = (
     "BadMigration",
     "InvalidArgument",
     "MigrationConflict",
+    "MigrationLockError",
     "MigrationsCollection",
     "Migrator",
     "NoMigration",

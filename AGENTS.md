@@ -58,7 +58,7 @@ sources/classic/migrations/
     migrations.py                      # MigrationsCollection + Migration/Hook + чтение/парсинг SQL
     migrator.py                        # Migrator: lock/history/apply/rollback, БЕЗ SQL
     cli.py                             # argparse + main(): list/apply/rollback
-    settings.py                        # Settings (pydantic-settings, .env)
+    settings.py                        # Settings (чтение из os.environ и .env)
     exceptions.py                      # BadMigration, MigrationConflict, BadConnectionURI, InvalidArgument
     backends/
         base.py                        # Backend: оркестрация, БЕЗ SQL-запросов

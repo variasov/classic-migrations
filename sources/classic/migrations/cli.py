@@ -103,12 +103,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _make_collection(args: argparse.Namespace) -> MigrationsCollection:
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()
     return MigrationsCollection(sources=settings.sources_list)
 
 
 def _make_migrator(args: argparse.Namespace) -> Migrator:
-    settings = Settings()  # type: ignore[call-arg]
+    settings = Settings()
     return Migrator(
         driver=settings.DATABASE_DRIVER,
         db_host=settings.DATABASE_HOST,
@@ -135,23 +135,23 @@ def _print_migrations(migrations: list[Any]) -> None:
 def cmd_apply(args: argparse.Namespace) -> int:
     collection = _make_collection(args)
     migrator = _make_migrator(args)
-    with migrator.lock() as lock:
-        history = migrator.history(lock)
+    with migrator:
+        history = migrator.history()
         hooks, migrations = collection.to_apply(history, target=args.migration_name)
         if args.plan:
             _print_migrations(migrations)
         else:
-            migrator.apply(lock, hooks, migrations, fake=args.fake)
+            migrator.apply(migrations, hooks, fake=args.fake)
     return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
     collection = _make_collection(args)
     migrator = _make_migrator(args)
-    with migrator.lock() as lock:
-        history = migrator.history(lock)
+    with migrator:
+        history = migrator.history()
 
-    applied = MigrationsCollection._applied_ids(history)
+    applied = MigrationsCollection.applied_ids(history)
     migrations = collection.list()
 
     if args.history:
@@ -176,13 +176,13 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_rollback(args: argparse.Namespace) -> int:
     collection = _make_collection(args)
     migrator = _make_migrator(args)
-    with migrator.lock() as lock:
-        history = migrator.history(lock)
+    with migrator:
+        history = migrator.history()
         hooks, migrations = collection.to_rollback(history, target=args.migration_name)
         if args.plan:
             _print_migrations(migrations)
         else:
-            migrator.rollback(lock, hooks, migrations, fake=args.fake)
+            migrator.rollback(migrations, hooks, fake=args.fake)
     return 0
 
 
@@ -201,7 +201,3 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except InvalidArgument as e:
         parser.error(e.args[0])
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

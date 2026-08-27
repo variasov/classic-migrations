@@ -2,12 +2,9 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from classic.migrations.backends.base import Lock
 from classic.migrations.migrator import Migrator
 
 from tests.backends.fake import FakeBackend
-
-_LOCK = Lock().__enter__()
 
 
 def write_file(path: Path, content: str) -> Path:
@@ -42,48 +39,45 @@ def _make_migration(
 
 
 class TestLock:
-    def test_lock_returns_context_manager(self) -> None:
+    def test_context_manager_acquires_lock(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        with migrator.lock() as lock:
-            assert lock.is_acquired
+        with migrator:
+            backend = _fake_backend(migrator)
             assert backend.locked
 
-    def test_lock_unacquired_outside_context(self) -> None:
+    def test_lock_released_after_context(self) -> None:
         migrator = Migrator(driver="fake")
-        with migrator.lock() as lock:
-            assert lock.is_acquired
-        assert not lock.is_acquired
+        with migrator:
+            backend = _fake_backend(migrator)
+            assert backend.locked
+        assert not backend.locked
 
-    def test_lock_object_passed_to_methods(self) -> None:
+    def test_lock_can_be_used_by_methods(self) -> None:
         migrator = Migrator(driver="fake")
-        with migrator.lock() as lock:
-            history = migrator.history(lock)
+        with migrator:
+            history = migrator.history()
             assert history == []
-            migrator.apply(lock, {}, [])
-            migrator.rollback(lock, {}, [])
+            migrator.apply([], {})
+            migrator.rollback([], {})
 
-    def test_asserts_if_lock_not_acquired(self) -> None:
+    def test_methods_raise_outside_context(self) -> None:
         migrator = Migrator(driver="fake")
-        with pytest.raises(AssertionError):
-            migrator.history(Lock())
-
-    def test_asserts_if_lock_expired(self) -> None:
-        migrator = Migrator(driver="fake")
-        with migrator.lock() as lock:
-            pass
-        with pytest.raises(AssertionError):
-            migrator.apply(lock, {}, [])
+        with pytest.raises(RuntimeError, match="not in a context"):
+            migrator.history()
+        with pytest.raises(RuntimeError, match="not in a context"):
+            migrator.apply([], {})
+        with pytest.raises(RuntimeError, match="not in a context"):
+            migrator.rollback([], {})
 
 
 class TestHistory:
     def test_history_returns_event_log(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        backend.mark("0001.a", "APPLIED")
-        backend.mark("0001.a", "ROLLED_BACK")
-
-        history = migrator.history(_LOCK)
+        with migrator:
+            backend = _fake_backend(migrator)
+            backend.mark("0001.a", "APPLIED")
+            backend.mark("0001.a", "ROLLED_BACK")
+            history = migrator.history()
 
         assert len(history) == 2
         assert history[0][0] == "0001.a"
@@ -92,29 +86,32 @@ class TestHistory:
 
     def test_history_ensures_table(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        assert not backend.migration_table_ready
-        migrator.history(_LOCK)
-        assert backend.migration_table_ready
+        with migrator:
+            backend = _fake_backend(migrator)
+            assert not backend.migration_table_ready
+            migrator.history()
+            assert backend.migration_table_ready
 
 
 class TestApply:
     def test_apply_sequence(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=True)
         m2 = _make_migration("0002.b", transactional=True)
 
-        migrator.apply(_LOCK, {}, [m1, m2])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply([m1, m2], {})
 
         assert backend.applied_list == ["0001.a", "0002.b"]
 
     def test_apply_mark_inside_transaction(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=True)
 
-        migrator.apply(_LOCK, {}, [m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply([m1], {})
 
         ops = backend.oplog
         begin_idx = next(i for i, (op, _) in enumerate(ops) if op == "begin")
@@ -125,10 +122,11 @@ class TestApply:
 
     def test_apply_non_transactional_sequence(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=False)
 
-        migrator.apply(_LOCK, {}, [m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply([m1], {})
 
         events = backend.events
         assert [e[2] for e in events] == ["PENDING", "APPLIED"]
@@ -143,17 +141,17 @@ class TestApply:
         from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
 
         pre = Hook("pre-apply", str(source / "pre-apply.sql"))
         post = Hook("post-apply", str(source / "post-apply.sql"))
         m1 = _make_migration("0001.a", transactional=True)
 
-        migrator.apply(
-            _LOCK,
-            {"pre-apply": [pre], "post-apply": [post]},
-            [m1],
-        )
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply(
+                [m1],
+                {"pre-apply": [pre], "post-apply": [post]},
+            )
 
         assert backend.applied_list == ["0001.a"]
         cursor_ops = [op for op in backend.oplog if op[0] == "cursor"]
@@ -165,18 +163,18 @@ class TestApply:
         from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
 
         pre = Hook("pre-apply", str(write_file(source / "pre-apply.sql", "SELECT pre;\n")))
         post = Hook("post-apply", str(write_file(source / "post-apply.sql", "SELECT post;\n")))
         m1 = _make_migration("0001.a")
 
-        migrator.apply(
-            _LOCK,
-            {"pre-apply": [pre], "post-apply": [post]},
-            [m1],
-            fake=True,
-        )
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply(
+                [m1],
+                {"pre-apply": [pre], "post-apply": [post]},
+                fake=True,
+            )
 
         assert backend.cursor_count == 0
         assert backend.applied_list == ["0001.a"]
@@ -184,18 +182,20 @@ class TestApply:
 
     def test_apply_fake_no_pending_event(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=False)
 
-        migrator.apply(_LOCK, {}, [m1], fake=True)
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply([m1], {}, fake=True)
 
         assert len(backend.events) == 1
         assert backend.events[0][2] == "APPLIED"
 
     def test_apply_empty_list_does_nothing(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        migrator.apply(_LOCK, {}, [])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.apply([], {})
 
         assert backend.events == []
         assert backend.cursor_count == 0
@@ -204,13 +204,14 @@ class TestApply:
 class TestRollback:
     def test_rollback_sequence(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        backend.mark("0001.a", "APPLIED")
-        backend.mark("0002.b", "APPLIED")
         m1 = _make_migration("0001.a", transactional=True)
         m2 = _make_migration("0002.b", transactional=True)
 
-        migrator.rollback(_LOCK, {}, [m2, m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            backend.mark("0001.a", "APPLIED")
+            backend.mark("0002.b", "APPLIED")
+            migrator.rollback([m2, m1], {})
 
         assert backend.applied_list == []
         assert [event[2] for event in backend.events] == [
@@ -222,10 +223,11 @@ class TestRollback:
 
     def test_rollback_mark_inside_transaction(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=True)
 
-        migrator.rollback(_LOCK, {}, [m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.rollback([m1], {})
 
         ops = backend.oplog
         begin_idx = next(i for i, (op, _) in enumerate(ops) if op == "begin")
@@ -236,10 +238,11 @@ class TestRollback:
 
     def test_rollback_non_transactional_sequence(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=False)
 
-        migrator.rollback(_LOCK, {}, [m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.rollback([m1], {})
 
         events = backend.events
         assert [e[2] for e in events] == ["PENDING", "ROLLED_BACK"]
@@ -252,17 +255,17 @@ class TestRollback:
         from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
 
         pre = Hook("pre-rollback", str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")))
         post = Hook("post-rollback", str(write_file(source / "post-rollback.sql", "SELECT post;\n")))
         m1 = _make_migration("0001.a", transactional=True)
 
-        migrator.rollback(
-            _LOCK,
-            {"pre-rollback": [pre], "post-rollback": [post]},
-            [m1],
-        )
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.rollback(
+                [m1],
+                {"pre-rollback": [pre], "post-rollback": [post]},
+            )
 
         assert backend.applied_list == []
         cursor_ops = [op for op in backend.oplog if op[0] == "cursor"]
@@ -274,19 +277,19 @@ class TestRollback:
         from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        backend.mark("0001.a", "APPLIED")
 
         pre = Hook("pre-rollback", str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")))
         post = Hook("post-rollback", str(write_file(source / "post-rollback.sql", "SELECT post;\n")))
         m1 = _make_migration("0001.a")
 
-        migrator.rollback(
-            _LOCK,
-            {"pre-rollback": [pre], "post-rollback": [post]},
-            [m1],
-            fake=True,
-        )
+        with migrator:
+            backend = _fake_backend(migrator)
+            backend.mark("0001.a", "APPLIED")
+            migrator.rollback(
+                [m1],
+                {"pre-rollback": [pre], "post-rollback": [post]},
+                fake=True,
+            )
 
         assert backend.cursor_count == 0
         assert backend.applied_list == []
@@ -294,10 +297,11 @@ class TestRollback:
 
     def test_rollback_fake_no_pending_event(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a", transactional=False)
 
-        migrator.rollback(_LOCK, {}, [m1], fake=True)
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.rollback([m1], {}, fake=True)
 
         assert len(backend.events) == 1
         assert backend.events[0][2] == "ROLLED_BACK"
@@ -306,11 +310,12 @@ class TestRollback:
         self,
     ) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         m1 = _make_migration("0001.a")
         m1.rollback_statements = []
 
-        migrator.rollback(_LOCK, {}, [m1])
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.rollback([m1], {})
 
         assert backend.applied_list == []
         assert backend.events[-1][2] == "ROLLED_BACK"
@@ -319,16 +324,22 @@ class TestRollback:
 class TestLifecycle:
     def test_close_closes_backend(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
-        migrator.close()
+        with migrator:
+            backend = _fake_backend(migrator)
         assert backend.closed
 
     def test_context_manager_closes_backend(self) -> None:
         migrator = Migrator(driver="fake")
-        backend = _fake_backend(migrator)
         with migrator:
-            migrator.history(_LOCK)
+            backend = _fake_backend(migrator)
         assert backend.closed
+
+    def test_context_manager_releases_lock(self) -> None:
+        migrator = Migrator(driver="fake")
+        with migrator:
+            backend = _fake_backend(migrator)
+            assert backend.locked
+        assert not backend.locked
 
     def test_empty_driver_raises(self) -> None:
         with pytest.raises(ValueError):

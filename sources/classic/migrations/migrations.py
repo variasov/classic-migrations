@@ -20,7 +20,6 @@ from collections.abc import Iterable
 from glob import glob
 from graphlib import CycleError, TopologicalSorter
 from logging import getLogger
-from typing import Any
 
 import sqlparse
 from classic.migrations import exceptions
@@ -162,6 +161,8 @@ class MigrationsCollection:
         if not sources:
             raise ValueError("sources must not be empty")
         self.sources = sources
+        self._migrations: list[Migration] | None = None
+        self._hooks: dict[str, list[Hook]] | None = None
 
     def _sources(self) -> list[str]:
         if isinstance(self.sources, str):
@@ -189,7 +190,10 @@ class MigrationsCollection:
                     raise exceptions.MigrationConflict(basename)
                 path = os.path.join(directory, filename)
                 migrations[basename] = Migration(basename, path, source_dir=directory)
-        return list(migrations.values())
+        migrations_list = list(migrations.values())
+        for m in migrations.values():
+            m.load()
+        return migrations_list
 
     def _read_hooks(self) -> dict[str, list[Hook]]:
         hooks: dict[str, list[Hook]] = {name: [] for name in HOOK_NAMES}
@@ -199,11 +203,6 @@ class MigrationsCollection:
                 if os.path.isfile(path):
                     hooks[name].append(Hook(name, path))
         return hooks
-
-    @staticmethod
-    def _load_all(migrations: Iterable[Migration]) -> None:
-        for m in migrations:
-            m.load()
 
     def _topological(self, migrations: Iterable[Migration]) -> list[Migration]:
         ml = list(migrations)
@@ -226,24 +225,30 @@ class MigrationsCollection:
             )
 
     @staticmethod
-    def _applied_ids(history: Iterable[tuple[Any, ...]]) -> set[str]:
+    def applied_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
         latest: dict[str, str] = {}
         for row in history:
             latest[row[0]] = row[2]
         return {migration_id for migration_id, status in latest.items() if status == "APPLIED"}
 
     def list(self) -> list[Migration]:
-        migrations = self._read_migrations()
-        self._load_all(migrations)
-        return self._topological(migrations)
+        if self._migrations is None:
+            migrations = self._read_migrations()
+            self._migrations = self._topological(migrations)
+        return self._migrations
+
+    def _get_hooks(self) -> dict[str, list[Hook]]:
+        if self._hooks is None:
+            self._hooks = self._read_hooks()
+        return self._hooks
 
     def to_apply(
         self,
-        history: Iterable[tuple[Any, ...]],
+        history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
         migrations = self.list()
-        applied = self._applied_ids(history)
+        applied = self.applied_ids(history)
         result = [m for m in migrations if m.id not in applied]
         if target is not None:
             target_ids = {m.id for m in migrations}
@@ -252,16 +257,16 @@ class MigrationsCollection:
             target_idx = next((i for i, m in enumerate(migrations) if m.id == target), -1)
             keep_ids = {m.id for m in migrations[: target_idx + 1]}
             result = [m for m in result if m.id in keep_ids]
-        hooks = self._read_hooks()
+        hooks = self._get_hooks()
         return hooks, result
 
     def to_rollback(
         self,
-        history: Iterable[tuple[Any, ...]],
+        history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
         migrations = self.list()
-        applied = self._applied_ids(history)
+        applied = self.applied_ids(history)
         reversed_migrations = list(reversed(migrations))
         result = [m for m in reversed_migrations if m.id in applied]
         if target is not None:
@@ -276,5 +281,5 @@ class MigrationsCollection:
                 for m in migrations[target_idx:]:
                     descendants.add(m.id)
                 result = [m for m in result if m.id in descendants]
-        hooks = self._read_hooks()
+        hooks = self._get_hooks()
         return hooks, result

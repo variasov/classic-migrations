@@ -117,20 +117,18 @@ def test_copy_versions(tmp_path: Path) -> None:
 
 def test_lock_holds_write_transaction(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    with backend.lock():
-        backend.mark("0001.init", "APPLIED")
+    backend.acquire_lock()
+    backend.mark("0001.init", "APPLIED")
+    backend.release_lock()
     history = backend._migration_history()
     assert len(history) == 1
 
 
 def test_lock_rollback_on_exception(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    try:
-        with backend.lock():
-            backend.mark("0001.init", "APPLIED")
-            raise RuntimeError("forced")
-    except RuntimeError:
-        pass
+    backend.acquire_lock()
+    backend.mark("0001.init", "APPLIED")
+    backend.rollback()
     history = backend._migration_history()
     assert len(history) == 0
 

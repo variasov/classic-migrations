@@ -110,9 +110,8 @@ class TestCmdApply:
 
         mock_collection.to_apply.assert_called_once_with([], target=None)
         mock_migrator.apply.assert_called_once_with(
-            mock_migrator.lock.return_value.__enter__.return_value,
-            {},
             [],
+            {},
             fake=False,
         )
 
@@ -124,9 +123,8 @@ class TestCmdApply:
 
         mock_collection.to_apply.assert_called_once_with([], target="0001.init")
         mock_migrator.apply.assert_called_once_with(
-            mock_migrator.lock.return_value.__enter__.return_value,
-            {},
             [],
+            {},
             fake=True,
         )
 
@@ -150,9 +148,8 @@ class TestCmdRollback:
 
         mock_collection.to_rollback.assert_called_once_with([], target=None)
         mock_migrator.rollback.assert_called_once_with(
-            mock_migrator.lock.return_value.__enter__.return_value,
-            {},
             [],
+            {},
             fake=False,
         )
 
@@ -164,9 +161,8 @@ class TestCmdRollback:
 
         mock_collection.to_rollback.assert_called_once_with([], target="0001.init")
         mock_migrator.rollback.assert_called_once_with(
-            mock_migrator.lock.return_value.__enter__.return_value,
-            {},
             [],
+            {},
             fake=True,
         )
 

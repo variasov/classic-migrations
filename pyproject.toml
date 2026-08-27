@@ -29,8 +29,6 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "sqlparse",
-    "pydantic-settings~=2.6",
-    "pydantic~=2.11",
     "setuptools~=78.1.0",
 ]
 
@@ -52,6 +50,12 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.4",
 ]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "SLF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["SLF001"]
 
 [tool.setuptools]
 package-dir = { "" = "sources" }

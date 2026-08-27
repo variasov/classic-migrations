@@ -32,7 +32,7 @@ class TransactionManager:
         self._started = False
 
     def __enter__(self) -> Self:
-        if not self.backend._in_transaction:
+        if not self.backend._in_transaction:  # noqa: SLF001
             self.backend.begin()
             self._started = True
         return self
@@ -49,33 +49,6 @@ class TransactionManager:
             return
         if self._started:
             self.backend.commit()
-
-
-class Lock:
-    """Represents an acquired advisory lock.
-
-    After exiting the ``with lock:`` block the lock is no longer
-    considered acquired.
-    """
-
-    def __init__(self) -> None:
-        self._acquired = False
-
-    @property
-    def is_acquired(self) -> bool:
-        return self._acquired
-
-    def __enter__(self) -> Self:
-        self._acquired = True
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool | None:
-        self._acquired = False
 
 
 class Backend:
@@ -120,6 +93,8 @@ class Backend:
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect()
         self.init_connection(self._connection)
+        self.migration_table_quoted = self.quote_identifier(self.migration_table)
+        self.versions_table_quoted = self.quote_identifier(self.versions_table)
         self._in_transaction = False
 
     # ------------------------------------------------------------------
@@ -162,14 +137,6 @@ class Backend:
         self.ensure_migration_table()
         return self._migration_history()
 
-    @property
-    def migration_table_quoted(self) -> str:
-        return self.quote_identifier(self.migration_table)
-
-    @property
-    def versions_table_quoted(self) -> str:
-        return self.quote_identifier(self.versions_table)
-
     # ------------------------------------------------------------------
     # Connection and transaction plumbing.
     # ------------------------------------------------------------------
@@ -182,17 +149,6 @@ class Backend:
 
     def init_connection(self, connection: Any) -> None:
         pass
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        self.close()
 
     def connect(self) -> Any:
         raise NotImplementedError()
@@ -226,8 +182,12 @@ class Backend:
         self.rollback()
         yield
 
-    @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator["Lock"]:
+    def acquire_lock(self) -> None:
+        raise NotImplementedError(
+            "Native session locking is not implemented for this backend"
+        )
+
+    def release_lock(self) -> None:
         raise NotImplementedError(
             "Native session locking is not implemented for this backend"
         )

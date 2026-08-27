@@ -40,3 +40,9 @@ class NoMigration(Exception):
     """
     The migration name could not be resolved
     """
+
+
+class MigrationLockError(Exception):
+    """
+    Could not acquire an advisory lock on the database
+    """

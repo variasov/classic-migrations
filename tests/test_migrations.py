@@ -72,6 +72,17 @@ class TestList:
         with pytest.raises(exceptions.NoMigration):
             collection.list()
 
+    def test_list_reads_migrations_once(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        collection = MigrationsCollection(sources=str(source))
+
+        first = collection.list()
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        second = collection.list()
+
+        assert [m.id for m in second] == ["0001.a"]
+        assert second is first
+
     def test_list_circular_dependency_raises(self, source: Path) -> None:
         write_file(
             source / "0001.a.sql",

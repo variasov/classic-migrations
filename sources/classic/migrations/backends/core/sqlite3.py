@@ -19,7 +19,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from classic.migrations.backends.base import Backend, Lock
+from classic.migrations.backends.base import Backend
+from classic.migrations.exceptions import MigrationLockError
 
 
 def _utcnow_str() -> str:
@@ -72,16 +73,16 @@ class SQLiteBackend(Backend, driver=sqlite3):
             (migration_id, _utcnow_str(), status),
         )
 
-    @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[Lock]:
-        self.begin_immediate()
-        with Lock() as lock_obj:
-            try:
-                yield lock_obj
-                self.commit()
-            except BaseException:
-                self.rollback()
-                raise
+    def acquire_lock(self) -> None:
+        try:
+            self.begin_immediate()
+        except self.DatabaseError as e:
+            raise MigrationLockError(
+                "Could not acquire advisory lock on the database"
+            ) from e
+
+    def release_lock(self) -> None:
+        self.commit()
 
     def begin_immediate(self) -> None:
         assert not self._in_transaction

@@ -13,20 +13,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 
 
-class Settings(BaseSettings):
-    SOURCES: str
-    DATABASE_DRIVER: str
-    DATABASE_USER_: str | None = Field(alias="DATABASE_USER", default=None)
-    DATABASE_USER_DOMAIN: str | None = None
-    DATABASE_PASSWORD: str | None = None
-    DATABASE_HOST: str | None = None
-    DATABASE_PORT: int | None = None
-    DATABASE_NAME: str | None = None
-    MIGRATIONS_TABLE: str = "migrations"
+def _read_env_file(path: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not os.path.exists(path):
+        return values
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip()
+    return values
+
+
+class Settings:
+    """Reads configuration from environment variables and a ``.env`` file.
+
+    Environment variables take precedence over values from the ``.env`` file.
+    """
+
+    def __init__(self, env_file: str = ".env") -> None:
+        self._environ = dict(os.environ)
+        for key, value in _read_env_file(env_file).items():
+            self._environ.setdefault(key, value)
+
+    @property
+    def SOURCES(self) -> str:
+        return self._environ.get("SOURCES", "")
+
+    @property
+    def DATABASE_DRIVER(self) -> str:
+        return self._environ.get("DATABASE_DRIVER", "")
+
+    @property
+    def DATABASE_USER_(self) -> str | None:
+        value = self._environ.get("DATABASE_USER")
+        return value if value else None
+
+    @property
+    def DATABASE_USER_DOMAIN(self) -> str | None:
+        value = self._environ.get("DATABASE_USER_DOMAIN")
+        return value if value else None
+
+    @property
+    def DATABASE_PASSWORD(self) -> str | None:
+        value = self._environ.get("DATABASE_PASSWORD")
+        return value if value else None
+
+    @property
+    def DATABASE_HOST(self) -> str | None:
+        value = self._environ.get("DATABASE_HOST")
+        return value if value else None
+
+    @property
+    def DATABASE_PORT(self) -> int | None:
+        value = self._environ.get("DATABASE_PORT")
+        if not value:
+            return None
+        return int(value)
+
+    @property
+    def DATABASE_NAME(self) -> str | None:
+        value = self._environ.get("DATABASE_NAME")
+        return value if value else None
+
+    @property
+    def MIGRATIONS_TABLE(self) -> str:
+        return self._environ.get("MIGRATIONS_TABLE", "migrations")
 
     @property
     def DATABASE_USER(self) -> str | None:
@@ -37,9 +94,3 @@ class Settings(BaseSettings):
     @property
     def sources_list(self) -> list[str]:
         return [s for s in self.SOURCES.split(":") if s]
-
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="allow",
-    )

@@ -2,7 +2,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from classic.migrations.backends.base import Backend, Lock
+from classic.migrations.backends.base import Backend
 
 
 class FakeDatabaseError(Exception):
@@ -133,12 +133,13 @@ class FakeBackend(Backend, driver=_FakeDriver):
 
     def close(self) -> None:
         self._closed = True
+        self._locked_flag = False
 
-    @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[Lock]:
+    def acquire_lock(self) -> None:
         self._locked_flag = True
-        with Lock() as lock_obj:
-            yield lock_obj
+
+    def release_lock(self) -> None:
+        self._locked_flag = False
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:

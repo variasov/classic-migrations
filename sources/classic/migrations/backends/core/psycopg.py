@@ -13,14 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
-from classic.migrations.backends.base import Backend, Lock
+from classic.migrations.backends.base import Backend
 
 
 class PsycopgBackend(Backend, driver=psycopg):
@@ -79,34 +78,17 @@ class PsycopgBackend(Backend, driver=psycopg):
             (migration_id, datetime.now(timezone.utc).replace(tzinfo=None), status),
         )
 
-    @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[Lock]:
+    def acquire_lock(self) -> None:
         lock_id = hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
+        self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
 
-        if timeout is not None:
-            deadline = time.monotonic() + timeout
-            while True:
-                acquired = self.execute(
-                    "SELECT pg_try_advisory_lock(%s, %s)", (key1, key2)
-                ).fetchone()[0]
-                if acquired:
-                    break
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(
-                        f"Could not acquire advisory lock within {timeout}s"
-                    )
-                time.sleep(0.1)
-        else:
-            self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
-
-        lock_obj = Lock()
-        with lock_obj:
-            try:
-                yield lock_obj
-            finally:
-                self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
+    def release_lock(self) -> None:
+        lock_id = hash(self.migration_table)
+        key1 = lock_id & 0x7FFFFFFF
+        key2 = (lock_id >> 32) & 0x7FFFFFFF
+        self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:

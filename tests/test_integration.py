@@ -24,25 +24,21 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                assert unapplied == []
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            assert unapplied == []
 
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, to_rollback = migrations.to_rollback(history)
-                db.rollback(lock, hooks, to_rollback)
+            history = db.history()
+            hooks, to_rollback = migrations.to_rollback(history)
+            db.rollback(to_rollback, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-                _, to_rollback = migrations.to_rollback(history)
-                assert to_rollback == []
+            history = db.history()
+            _, to_rollback = migrations.to_rollback(history)
+            assert to_rollback == []
 
     def test_apply_creates_table_and_data(self, source: Path) -> None:
         write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
@@ -52,10 +48,9 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
             cursor = db.backend.execute("SELECT id FROM foo")
             assert cursor.fetchone()[0] == 42
@@ -68,19 +63,15 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, to_rollback = migrations.to_rollback(history)
-                db.rollback(lock, hooks, to_rollback)
+            history = db.history()
+            hooks, to_rollback = migrations.to_rollback(history)
+            db.rollback(to_rollback, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-
+            history = db.history()
             assert len(history) == 2
             assert history[0][0] == "0001.init"
             assert history[0][2] == "APPLIED"
@@ -94,16 +85,14 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied, fake=True)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks, fake=True)
 
             tables = db.backend.list_tables()
             assert "foo" not in tables
 
-            with db.lock() as lock:
-                history = db.history(lock)
+            history = db.history()
             assert len(history) == 1
             assert history[0][2] == "APPLIED"
 
@@ -115,10 +104,9 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history, target="0001.a")
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history, target="0001.a")
+            db.apply(unapplied, hooks)
 
             tables = db.backend.list_tables()
             assert "a" in tables
@@ -133,10 +121,9 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
             tables = db.backend.list_tables()
             assert "pre_hook" in tables
@@ -152,13 +139,11 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
+            history = db.history()
             assert len(history) == 2
             assert history[0][2] == "PENDING"
             assert history[1][2] == "APPLIED"
@@ -174,19 +159,15 @@ class TestPublicApiSqlite:
         migrations = MigrationsCollection(str(source))
 
         with db:
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(lock, hooks, unapplied)
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-                hooks, to_rollback = migrations.to_rollback(history)
-                db.rollback(lock, hooks, to_rollback)
+            history = db.history()
+            hooks, to_rollback = migrations.to_rollback(history)
+            db.rollback(to_rollback, hooks)
 
-            with db.lock() as lock:
-                history = db.history(lock)
-
+            history = db.history()
             statuses = [row[2] for row in history]
             assert statuses.count("PENDING") == 1
             assert statuses[0] == "PENDING"
