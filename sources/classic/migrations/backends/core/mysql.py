@@ -13,13 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations.backends.base import Backend
 
 
-class MySQLBackend(DatabaseBackend):
+class MySQLBackend(Backend):
 
     def connect(self, dburi):
         kwargs = {"db": dburi.database}
@@ -72,48 +71,37 @@ class MySQLBackend(DatabaseBackend):
     def _create_migration_table(self):
         self.execute(
             "CREATE TABLE {0} ("
-            "migration_id VARCHAR(255) PRIMARY KEY, "
-            "content_hash VARCHAR(64) NULL, "
-            "applied_at TIMESTAMP NOT NULL, "
-            "comment VARCHAR(255) NULL)".format(self.migration_table_quoted)
+            "id INT AUTO_INCREMENT PRIMARY KEY, "
+            "migration_id VARCHAR(255) NOT NULL, "
+            "created_at TIMESTAMP NOT NULL, "
+            "status VARCHAR(16) NOT NULL)".format(self.migration_table_quoted)
         )
 
     def _copy_versions(self):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "SELECT migration_id, applied_at_utc, 'APPLIED' "
             "FROM {1}".format(self.migration_table_quoted, self.versions_table_quoted)
         )
 
-    def _applied_migrations(self):
+    def _migration_history(self):
         cursor = self.execute(
-            "SELECT migration_id, content_hash, applied_at, comment "
-            "FROM {0} ORDER BY applied_at, migration_id".format(
-                self.migration_table_quoted
-            )
+            "SELECT migration_id, created_at, status "
+            "FROM {0} ORDER BY id".format(self.migration_table_quoted)
         )
         return [tuple(row) for row in cursor.fetchall()]
 
-    def mark_applied(self, migration_id, content_hash, comment=None, applied_at=None):
-        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    def mark(self, migration_id, status):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "VALUES (%(migration_id)s, %(content_hash)s, %(applied_at)s, "
-            "%(comment)s)".format(self.migration_table_quoted),
-            {
-                "migration_id": migration_id,
-                "content_hash": content_hash,
-                "applied_at": applied_at,
-                "comment": comment,
-            },
-        )
-
-    def unmark(self, migration_id):
-        self.execute(
-            "DELETE FROM {0} WHERE migration_id = %(migration_id)s".format(
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "VALUES (%(migration_id)s, %(created_at)s, %(status)s)".format(
                 self.migration_table_quoted
             ),
-            {"migration_id": migration_id},
+            {
+                "migration_id": migration_id,
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "status": status,
+            },
         )
 
 

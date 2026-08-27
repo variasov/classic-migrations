@@ -14,14 +14,14 @@
 # limitations under the License.
 
 import argparse
+import csv
 import logging
-import os
-import re
 import sys
+from typing import Any
 
-import tabulate
-from classic.migrations import Migrations
 from classic.migrations.exceptions import InvalidArgument
+from classic.migrations.migrations import MigrationsCollection
+from classic.migrations.migrator import Migrator
 from classic.migrations.settings import Settings
 
 verbosity_levels = {
@@ -49,234 +49,140 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=False)
 
-    def add_match(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "-m",
-            "--match",
-            help="Select migrations matching PATTERN (regular expression)",
-            metavar="PATTERN",
-        )
-
-    def add_revision(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "-r",
-            "--revision",
-            help="Apply/rollback migration with id REVISION and all its dependencies",
-            metavar="REVISION",
-        )
-
-    def add_all_flag(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "-a",
-            "--all",
-            dest="all",
-            action="store_true",
-            help="Select all migrations, regardless of whether "
-            "they have been previously applied",
-        )
-
-    def add_force_flag(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "-f",
-            "--force",
-            dest="force",
-            action="store_true",
-            help="Force apply/rollback of steps even if previous steps have failed",
-        )
-
-    def add_skip_hash_check(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--skip-hash-check",
-            dest="skip_hash_check",
-            action="store_true",
-            help="Skip verification that applied migrations have not changed",
-        )
-
     p = subparsers.add_parser("apply", parents=[common], help="Apply migrations")
-    add_match(p)
-    add_revision(p)
-    add_all_flag(p)
-    add_force_flag(p)
-    add_skip_hash_check(p)
     p.add_argument(
-        "-1",
-        "--one",
+        "migration_name",
+        nargs="?",
+        default=None,
+        help="Apply migrations up to and including this one",
+    )
+    p.add_argument(
+        "--fake",
         action="store_true",
-        help="Apply a single migration. "
-        "If there are no unapplied migrations, reapply the last migration",
+        help="Only create history records, without running the migrations",
+    )
+    p.add_argument(
+        "--plan",
+        action="store_true",
+        help="Do not apply migrations, only list those that could be applied",
     )
     p.set_defaults(func=cmd_apply)
-
-    p = subparsers.add_parser(
-        "develop",
-        parents=[common],
-        help="Apply migrations. "
-        "If there are no unapplied migrations, reapply the last migration",
-    )
-    add_skip_hash_check(p)
-    p.add_argument("-n", type=int, default=1, help="Act on the last N migrations")
-    p.set_defaults(func=cmd_develop)
 
     p = subparsers.add_parser(
         "list",
         parents=[common],
         help="List all available and applied migrations",
     )
-    add_match(p)
+    p.add_argument(
+        "--history",
+        action="store_true",
+        help="Show only applied migrations",
+    )
     p.set_defaults(func=cmd_list)
 
     p = subparsers.add_parser("rollback", parents=[common], help="Rollback migrations")
-    add_match(p)
-    add_revision(p)
-    add_all_flag(p)
-    add_force_flag(p)
+    p.add_argument(
+        "migration_name",
+        nargs="?",
+        default=None,
+        help="Rollback migrations up to and including this one",
+    )
+    p.add_argument(
+        "--fake",
+        action="store_true",
+        help="Only create history records, without running the migrations",
+    )
+    p.add_argument(
+        "--plan",
+        action="store_true",
+        help="Do not rollback migrations, only list those that could be rolled back",
+    )
     p.set_defaults(func=cmd_rollback)
-
-    p = subparsers.add_parser(
-        "reapply", parents=[common], help="Rollback then reapply migrations"
-    )
-    add_match(p)
-    add_revision(p)
-    add_force_flag(p)
-    add_skip_hash_check(p)
-    p.set_defaults(func=cmd_reapply)
-
-    p = subparsers.add_parser(
-        "mark",
-        parents=[common],
-        help="Mark migrations as applied, without running them",
-    )
-    add_match(p)
-    add_revision(p)
-    add_all_flag(p)
-    p.set_defaults(func=cmd_mark)
-
-    p = subparsers.add_parser(
-        "unmark",
-        parents=[common],
-        help="Unmark applied migrations, without rolling them back",
-    )
-    add_match(p)
-    add_revision(p)
-    p.set_defaults(func=cmd_unmark)
-
-    p = subparsers.add_parser("new", parents=[common], help="Create a new migration")
-    p.add_argument("-m", "--message", default="", help="Message")
-    p.set_defaults(func=cmd_new)
-
-    p = subparsers.add_parser(
-        "init", parents=[common], help="Initialize a new project"
-    )
-    p.set_defaults(func=cmd_init)
 
     return parser
 
 
-def _make_migrations(args: argparse.Namespace) -> Migrations:
+def _make_collection(args: argparse.Namespace) -> MigrationsCollection:
     settings = Settings()  # type: ignore[call-arg]
-    return Migrations(
-        sources=settings.sources_list,
+    return MigrationsCollection(sources=settings.sources_list)
+
+
+def _make_migrator(args: argparse.Namespace) -> Migrator:
+    settings = Settings()  # type: ignore[call-arg]
+    return Migrator(
         driver=settings.DATABASE_DRIVER,
         db_host=settings.DATABASE_HOST,
         db_port=settings.DATABASE_PORT,
         db_name=settings.DATABASE_NAME,
         db_user=settings.DATABASE_USER,
-        db_password=settings.DATABASE_PASSWORD,
+        db_pass=settings.DATABASE_PASSWORD,
         migration_table=settings.MIGRATIONS_TABLE,
     )
 
 
+def _write_csv(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
+    writer = csv.writer(sys.stdout)
+    writer.writerow(header)
+    writer.writerows(rows)
+
+
+def _print_migrations(migrations: list[Any]) -> None:
+    ids = [m.id for m in migrations]
+    sources = [getattr(m, "source_dir", "") or "" for m in migrations]
+    _write_csv(("ID", "SOURCE"), list(zip(ids, sources)))
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.apply(
-        match=args.match,
-        revision=args.revision,
-        all=args.all,
-        force=args.force,
-        one=args.one,
-        check_hashes=not args.skip_hash_check,
-    )
-    return 0
-
-
-def cmd_develop(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.develop(n=args.n, check_hashes=not args.skip_hash_check)
+    collection = _make_collection(args)
+    migrator = _make_migrator(args)
+    with migrator.lock() as lock:
+        history = migrator.history(lock)
+        hooks, migrations = collection.to_apply(history, target=args.migration_name)
+        if args.plan:
+            _print_migrations(migrations)
+        else:
+            migrator.apply(lock, hooks, migrations, fake=args.fake)
     return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    rows = m.list()
-    if args.match:
-        search = re.compile(args.match).search
-        rows = [r for r in rows if search(r[1])]
+    collection = _make_collection(args)
+    migrator = _make_migrator(args)
+    with migrator.lock() as lock:
+        history = migrator.history(lock)
+
+    applied = MigrationsCollection._applied_ids(history)
+    migrations = collection.list()
+
+    if args.history:
+        rows = [("A", m.id, m.source_dir or "") for m in migrations if m.id in applied]
+    else:
+        rows = [
+            ("A" if m.id in applied else "U", m.id, m.source_dir or "")
+            for m in migrations
+        ]
 
     status, ids, sources = zip(*rows) if rows else ((), (), ())
 
     if sys.stdout.isatty():
         status = [
-            f"\033[92m{s}\033[0m" if s == "A"
-            else f"\033[91m{s}\033[0m"
-            for s in status
+            f"\033[92m{s}\033[0m" if s == "A" else f"\033[91m{s}\033[0m" for s in status
         ]
 
-    print(
-        tabulate.tabulate(
-            zip(status, ids, sources), headers=("STATUS", "ID", "SOURCE")
-        )
-    )
+    _write_csv(("STATUS", "ID", "SOURCE"), list(zip(status, ids, sources)))
     return 0
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.rollback(
-        match=args.match,
-        revision=args.revision,
-        all=args.all,
-        force=args.force,
-    )
-    return 0
-
-
-def cmd_reapply(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.reapply(
-        match=args.match,
-        revision=args.revision,
-        force=args.force,
-        check_hashes=not args.skip_hash_check,
-    )
-    return 0
-
-
-def cmd_mark(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.mark(match=args.match, revision=args.revision, all=args.all)
-    return 0
-
-
-def cmd_unmark(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    m.unmark(match=args.match, revision=args.revision)
-    return 0
-
-
-def cmd_new(args: argparse.Namespace) -> int:
-    m = _make_migrations(args)
-    filename = m.new(message=args.message)
-    print("Created file", filename)
-    return 0
-
-
-def cmd_init(args: argparse.Namespace) -> int:
-    settings = Settings()  # type: ignore[call-arg]
-    if not settings.sources_list:
-        raise InvalidArgument("No SOURCES configured. Set SOURCES in .env or environment.")
-    path = os.path.abspath(settings.sources_list[0])
-    os.makedirs(path, exist_ok=True)
-    print(f"Created migrations directory {path}")
+    collection = _make_collection(args)
+    migrator = _make_migrator(args)
+    with migrator.lock() as lock:
+        history = migrator.history(lock)
+        hooks, migrations = collection.to_rollback(history, target=args.migration_name)
+        if args.plan:
+            _print_migrations(migrations)
+        else:
+            migrator.rollback(lock, hooks, migrations, fake=args.fake)
     return 0
 
 

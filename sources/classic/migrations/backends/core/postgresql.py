@@ -15,18 +15,15 @@
 
 import warnings
 from contextlib import contextmanager
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations.backends.base import Backend
 
 
-class PostgresqlBackend(DatabaseBackend):
-    """
-    Backend for PostgreSQL and PostgreSQL compatible databases.
-    """
+class PostgresqlBackend(Backend):
 
     schema = None
+
     @property
     def TRANSACTION_STATUS_IDLE(self):
         from psycopg.pq import TransactionStatus
@@ -35,10 +32,6 @@ class PostgresqlBackend(DatabaseBackend):
 
     def connect(self, dburi):
         kwargs = {"dbname": dburi.database, "autocommit": True}
-
-        # Default to autocommit mode: without this psycopg sends a BEGIN before
-        # every query, causing a warning when we then explicitly start a
-        # transaction. This warning becomes an error in CockroachDB.
         kwargs.update(dburi.args)
         if dburi.username is not None:
             kwargs["user"] = dburi.username
@@ -77,53 +70,40 @@ class PostgresqlBackend(DatabaseBackend):
     def _create_migration_table(self):
         self.execute(
             "CREATE TABLE {0} ("
-            "migration_id VARCHAR(255) PRIMARY KEY, "
-            "content_hash VARCHAR(64) NULL, "
-            "applied_at TIMESTAMP NOT NULL, "
-            "comment VARCHAR(255) NULL)".format(self.migration_table_quoted)
+            "id SERIAL PRIMARY KEY, "
+            "migration_id VARCHAR(255) NOT NULL, "
+            "created_at TIMESTAMP NOT NULL, "
+            "status VARCHAR(16) NOT NULL)".format(self.migration_table_quoted)
         )
 
     def _copy_versions(self):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "SELECT migration_id, applied_at_utc, 'APPLIED' "
             "FROM {1}".format(self.migration_table_quoted, self.versions_table_quoted)
         )
 
-    def _applied_migrations(self):
+    def _migration_history(self):
         cursor = self.execute(
-            "SELECT migration_id, content_hash, applied_at, comment "
-            "FROM {0} ORDER BY applied_at, migration_id".format(
-                self.migration_table_quoted
-            )
+            "SELECT migration_id, created_at, status "
+            "FROM {0} ORDER BY id".format(self.migration_table_quoted)
         )
         return [tuple(row) for row in cursor.fetchall()]
 
-    def mark_applied(self, migration_id, content_hash, comment=None, applied_at=None):
-        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    def mark(self, migration_id, status):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "VALUES (%(migration_id)s, %(content_hash)s, %(applied_at)s, "
-            "%(comment)s)".format(self.migration_table_quoted),
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "VALUES (%(migration_id)s, %(created_at)s, %(status)s)".format(
+                self.migration_table_quoted
+            ),
             {
                 "migration_id": migration_id,
-                "content_hash": content_hash,
-                "applied_at": applied_at,
-                "comment": comment,
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "status": status,
             },
         )
 
-    def unmark(self, migration_id):
-        self.execute(
-            "DELETE FROM {0} WHERE migration_id = %(migration_id)s".format(
-                self.migration_table_quoted
-            ),
-            {"migration_id": migration_id},
-        )
-
     def commit(self):
-        # The connection is in autocommit mode and ignores calls to
-        # ``commit()`` and ``rollback()``, so we have to issue the SQL directly
         self.execute("COMMIT")
         super().commit()
 

@@ -2,6 +2,11 @@ import os
 from pathlib import Path
 
 import pytest
+from classic.migrations.backends.base import Backend
+
+from tests.backends.fake import FakeBackend
+
+Backend.implementations["fake"] = FakeBackend
 
 _env_path = Path(__file__).parent / ".env"
 if _env_path.exists():
@@ -17,8 +22,3 @@ def source(tmp_path: Path) -> Path:
     d = tmp_path / "migrations"
     d.mkdir()
     return d
-
-
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "test.db"

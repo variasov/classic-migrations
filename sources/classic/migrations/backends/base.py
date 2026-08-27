@@ -15,93 +15,77 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from itertools import count
 from types import TracebackType
 from typing import Any, ClassVar, Self
 
 from classic.migrations.exceptions import BadConnectionURI
 
+STATUS_PENDING = "PENDING"
+STATUS_APPLIED = "APPLIED"
+STATUS_ROLLED_BACK = "ROLLED_BACK"
+ALL_STATUSES = (STATUS_PENDING, STATUS_APPLIED, STATUS_ROLLED_BACK)
+
 
 class TransactionManager:
-    """
-    Returned by the :meth:`~classic.migrations.backends.DatabaseBackend.transaction`
-    context manager.
-
-    If rollback is called, the transaction is flagged to be rolled back
-    when the context manager block closes
-    """
-
-    def __init__(self, backend: "DatabaseBackend") -> None:
+    def __init__(self, backend: "Backend") -> None:
         self.backend = backend
+        self._started = False
 
     def __enter__(self) -> Self:
-        self._do_begin()
+        if not self.backend._in_transaction:
+            self.backend.begin()
+            self._started = True
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
         if exc_type:
-            self._do_rollback()
+            if self._started:
+                self.backend.rollback()
             return
-
-        self._do_commit()
-
-    def _do_begin(self) -> None:
-        """
-        Instruct the backend to begin a transaction
-        """
-        self.backend.begin()
-
-    def _do_commit(self) -> None:
-        """
-        Instruct the backend to commit the transaction
-        """
-        self.backend.commit()
-
-    def _do_rollback(self) -> None:
-        """
-        Instruct the backend to roll back the transaction
-        """
-        self.backend.rollback()
+        if self._started:
+            self.backend.commit()
 
 
-class SavepointTransactionManager(TransactionManager):
+class Lock:
+    """Represents an acquired advisory lock.
 
-    id: str | None = None
-    id_generator = count(1)
+    After exiting the ``with lock:`` block the lock is no longer
+    considered acquired.
+    """
 
-    def _do_begin(self) -> None:
-        assert self.id is None
-        self.id = f"sp_{next(self.id_generator)}"
-        self.backend.savepoint(self.id)
+    def __init__(self) -> None:
+        self._acquired = False
 
-    def _do_commit(self) -> None:
-        """
-        This does nothing.
+    @property
+    def is_acquired(self) -> bool:
+        return self._acquired
 
-        Trying to the release savepoint here could cause an database error in
-        databases where DDL queries cause the transaction to be committed
-        and all savepoints released.
-        """
+    def __enter__(self) -> Self:
+        self._acquired = True
+        return self
 
-    def _do_rollback(self) -> None:
-        assert self.id is not None
-        self.backend.savepoint_rollback(self.id)
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        self._acquired = False
 
 
-class DatabaseBackend:
+class Backend:
+    implementations: ClassVar[dict[str, type["Backend"]]] = {}
 
-    # Registry of concrete backends, keyed by the URI scheme they handle.
-    # Populated automatically by ``__init_subclass__``.
-    implementations: ClassVar[dict[str, type["DatabaseBackend"]]] = {}
-
-    # The DB-API driver module this backend uses. Set on each concrete backend
-    # class by passing the module to the ``driver`` keyword argument.
     driver: Any
 
-    migration_table = "migrations"
-    versions_table = "versions"  # Need for migrate old yoyo tables
+    versions_table = "versions"
 
-    _in_transaction = False
+    transactional_ddl: ClassVar[bool] = False
 
     def __init_subclass__(cls, driver: Any = None, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -110,45 +94,38 @@ class DatabaseBackend:
             cls.implementations[driver.__name__] = cls
 
     @classmethod
-    def get_backend_class(cls, name: str) -> type["DatabaseBackend"]:
+    def get_implementation(cls, name: str) -> type["Backend"]:
         try:
             return cls.implementations[name]
         except KeyError:
-            raise BadConnectionURI(
-                f"Unrecognised database driver {name!r}"
-            )
+            raise BadConnectionURI(f"Unrecognised database driver {name!r}")
 
-    def __init__(self, db_host: str | None = None, db_port: int | None = None, db_name: str | None = None, db_user: str | None = None, db_password: str | None = None, db_args: dict[str, Any] | None = None, migration_table: str = "migrations") -> None:
+    def __init__(
+        self,
+        db_host: str | None = None,
+        db_port: int | None = None,
+        db_name: str | None = None,
+        db_user: str | None = None,
+        db_password: str | None = None,
+        db_args: dict[str, Any] | None = None,
+        migration_table: str = "migrations",
+    ) -> None:
         self.db_host = db_host
         self.db_port = db_port
         self.db_name = db_name
         self.db_user = db_user
         self.db_password = db_password
         self.db_args = db_args or {}
-        self.migration_table = migration_table or "migrations"
+        self.migration_table = migration_table
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect()
         self.init_connection(self._connection)
-
-    @property
-    def migration_table_quoted(self) -> str:
-        return self.quote_identifier(self.migration_table)
-
-    @property
-    def versions_table_quoted(self) -> str:
-        return self.quote_identifier(self.versions_table)
+        self._in_transaction = False
 
     # ------------------------------------------------------------------
-    # Query methods.
-    #
-    # Each backend implements its own version of every query using its own
-    # SQL dialect and native ``paramstyle``. There is deliberately no shared
-    # SQL in this base class.
+    # Abstract query methods — implemented by each backend.
     # ------------------------------------------------------------------
     def list_tables(self) -> list[str]:
-        """
-        Return the list of tables present in the backend.
-        """
         raise NotImplementedError()
 
     def _create_migration_table(self) -> None:
@@ -157,29 +134,16 @@ class DatabaseBackend:
     def _copy_versions(self) -> None:
         raise NotImplementedError()
 
-    def _applied_migrations(self) -> list[tuple[Any, ...]]:
+    def _migration_history(self) -> list[tuple[Any, ...]]:
         raise NotImplementedError()
 
-    def mark_applied(self, migration_id: str, content_hash: str | None, comment: str | None = None, applied_at: Any = None) -> None:
-        """
-        Record ``migration_id`` in the migration history table.
-        """
-        raise NotImplementedError()
-
-    def unmark(self, migration_id: str) -> None:
-        """
-        Remove ``migration_id`` from the migration history table.
-        """
+    def mark(self, migration_id: str, status: str) -> None:
         raise NotImplementedError()
 
     # ------------------------------------------------------------------
     # Generic orchestration (no SQL).
     # ------------------------------------------------------------------
     def ensure_migration_table(self) -> None:
-        """
-        Create the migration history table if it does not exist, migrating
-        data from the legacy ``versions`` table where necessary.
-        """
         if self.migration_table in self.list_tables():
             return
         if self.versions_table in self.list_tables():
@@ -188,17 +152,23 @@ class DatabaseBackend:
         else:
             self._create_migration_table()
 
-    def applied_migrations(self) -> list[tuple[Any, ...]]:
+    def migration_history(self) -> list[tuple[Any, ...]]:
         """
-        Return the list of applied migrations, in the order they were applied.
+        Return the full log of migration history events, in the order they
+        were recorded.
 
-        Each row is a tuple ``(migration_id, content_hash, applied_at, comment)``.
+        Each row is ``(migration_id, created_at, status)``.
         """
         self.ensure_migration_table()
-        return self._applied_migrations()
+        return self._migration_history()
 
-    def is_applied(self, migration_id: str) -> bool:
-        return migration_id in {row[0] for row in self.applied_migrations()}
+    @property
+    def migration_table_quoted(self) -> str:
+        return self.quote_identifier(self.migration_table)
+
+    @property
+    def versions_table_quoted(self) -> str:
+        return self.quote_identifier(self.versions_table)
 
     # ------------------------------------------------------------------
     # Connection and transaction plumbing.
@@ -211,15 +181,17 @@ class DatabaseBackend:
         self.connection.close()
 
     def init_connection(self, connection: Any) -> None:
-        """
-        Called when creating a connection or after a rollback. May do any
-        db specific tasks required to make the connection ready for use.
-        """
+        pass
 
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
     def connect(self) -> Any:
@@ -231,10 +203,7 @@ class DatabaseBackend:
         return f'"{quoted}"'
 
     def transaction(self) -> TransactionManager:
-        if not self._in_transaction:
-            return TransactionManager(self)
-        else:
-            return SavepointTransactionManager(self)
+        return TransactionManager(self)
 
     def cursor(self) -> Any:
         return self.connection.cursor()
@@ -249,55 +218,21 @@ class DatabaseBackend:
         self._in_transaction = False
 
     def begin(self) -> None:
-        """
-        Begin a new transaction
-        """
-        assert not self._in_transaction
         self._in_transaction = True
         self.execute("BEGIN")
 
-    def savepoint(self, id: str) -> None:
-        """
-        Create a new savepoint with the given id
-        """
-        self.execute(f"SAVEPOINT {id}")
-
-    def savepoint_rollback(self, id: str) -> None:
-        """
-        Rollback the savepoint with the given id
-        """
-        self.execute(f"ROLLBACK TO SAVEPOINT {id}")
-
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
-        """
-        Disable the connection's transaction support, for example by
-        setting the isolation mode to 'autocommit'
-        """
         self.rollback()
         yield
 
     @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[None]:
-        """
-        Acquire a session-scoped lock to prevent concurrent migrations.
-
-        The lock must be released automatically when the connection (and thus
-        the session) is closed, including on abnormal process termination.
-        """
+    def lock(self, timeout: int | None = None) -> Generator["Lock"]:
         raise NotImplementedError(
             "Native session locking is not implemented for this backend"
         )
 
     def execute(self, sql: str, params: Any = None) -> Any:
-        """
-        Create a new cursor, execute a single statement and return the cursor
-        object.
-
-        :param sql: A single SQL statement using the driver's native
-                    parameter style
-        :param params: Parameters in the format required by the driver
-        """
         cursor = self.cursor()
         if params is None:
             cursor.execute(sql)

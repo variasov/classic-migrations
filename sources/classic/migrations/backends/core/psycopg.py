@@ -20,11 +20,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+from classic.migrations.backends.base import Backend, Lock
 
-from classic.migrations.backends.base import DatabaseBackend
 
-
-class PsycopgBackend(DatabaseBackend, driver=psycopg):
+class PsycopgBackend(Backend, driver=psycopg):
 
     def connect(self) -> psycopg.Connection:
         kwargs: dict[str, Any] = {}
@@ -53,42 +52,35 @@ class PsycopgBackend(DatabaseBackend, driver=psycopg):
     def _create_migration_table(self) -> None:
         self.execute(
             f"CREATE TABLE {self.migration_table_quoted} ("
-            "migration_id VARCHAR(255) PRIMARY KEY, "
-            "content_hash VARCHAR(64) NULL, "
-            "applied_at TIMESTAMP NOT NULL, "
-            "comment VARCHAR(255) NULL)"
+            "id SERIAL PRIMARY KEY, "
+            "migration_id VARCHAR(255) NOT NULL, "
+            "created_at TIMESTAMP NOT NULL, "
+            "status VARCHAR(16) NOT NULL)"
         )
 
     def _copy_versions(self) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, content_hash, applied_at, comment) "
-            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "SELECT migration_id, applied_at_utc, 'APPLIED' "
             f"FROM {self.versions_table_quoted}"
         )
 
-    def _applied_migrations(self) -> list[tuple[Any, ...]]:
+    def _migration_history(self) -> list[tuple[Any, ...]]:
         cursor = self.execute(
-            "SELECT migration_id, content_hash, applied_at, comment "
-            f"FROM {self.migration_table_quoted} ORDER BY applied_at, migration_id"
+            f"SELECT migration_id, created_at, status "
+            f"FROM {self.migration_table_quoted} ORDER BY id"
         )
         return [tuple(row) for row in cursor.fetchall()]
 
-    def mark_applied(self, migration_id: str, content_hash: str | None, comment: str | None = None, applied_at: datetime | None = None) -> None:
-        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    def mark(self, migration_id: str, status: str) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, content_hash, applied_at, comment) "
-            "VALUES (%s, %s, %s, %s)",
-            (migration_id, content_hash, applied_at, comment),
-        )
-
-    def unmark(self, migration_id: str) -> None:
-        self.execute(
-            f"DELETE FROM {self.migration_table_quoted} WHERE migration_id = %s",
-            (migration_id,),
+            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "VALUES (%s, %s, %s)",
+            (migration_id, datetime.now(timezone.utc).replace(tzinfo=None), status),
         )
 
     @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[None]:
+    def lock(self, timeout: int | None = None) -> Generator[Lock]:
         lock_id = hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
@@ -109,10 +101,12 @@ class PsycopgBackend(DatabaseBackend, driver=psycopg):
         else:
             self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
 
-        try:
-            yield
-        finally:
-            self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
+        lock_obj = Lock()
+        with lock_obj:
+            try:
+                yield lock_obj
+            finally:
+                self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:

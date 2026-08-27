@@ -17,7 +17,6 @@ from classic.migrations.backends.core.postgresql import PostgresqlBackend
 
 
 class RedshiftBackend(PostgresqlBackend):
-    # Redshift does not support ROLLBACK TO SAVEPOINT
     def savepoint(self, id):
         pass
 

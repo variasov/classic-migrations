@@ -1,3 +1,23 @@
+2.0.0 (unreleased)
+------------------
+
+**This version introduces backwards incompatible changes.**
+
+* Rename ``Migrations`` to ``MigrationsCollection``: it now only reads
+  migration sources and has no access to the database.
+* Add a new ``Migrator`` class: takes database parameters, selects a backend
+  by driver module name and executes migrations. Public methods: ``lock()``,
+  ``history()``, ``apply()``, ``rollback()``.
+* Rename ``DatabaseBackend`` to ``Backend``.
+* The migration history table is now append-only: every apply/rollback appends
+  an event row ``(migration_id, applied_at, comment, status)``; the current
+  status of a migration is determined by its latest event.
+* Remove content hash verification of applied migrations.
+* CLI reduced to ``list`` (with ``--history``), ``apply`` and ``rollback``
+  (both with an optional positional ``migration_name``, ``--fake`` and
+  ``--plan``); remove ``develop``, ``reapply``, ``mark``, ``unmark``,
+  ``new`` and ``init`` commands.
+
 8.2.0 (released 2022-12-14)
 ---------------------------
 

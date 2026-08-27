@@ -29,7 +29,6 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "sqlparse",
-    "tabulate",
     "pydantic-settings~=2.6",
     "pydantic~=2.11",
     "setuptools~=78.1.0",

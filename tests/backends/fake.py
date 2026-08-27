@@ -2,7 +2,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations.backends.base import Backend, Lock
 
 
 class FakeDatabaseError(Exception):
@@ -43,19 +43,23 @@ class _FakeConnection:
         pass
 
 
-class FakeBackend(DatabaseBackend, driver=_FakeDriver):
+class FakeBackend(Backend, driver=_FakeDriver):
+    """Test-only backend with in-memory event log and operation journal."""
 
     def __init__(
         self,
         *,
-        applied: list[tuple[str, str | None, str | None, Any]] | None = None,
+        applied: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
-        self._applied: list[tuple[str, str | None, str | None, Any]] = list(applied) if applied else []
+        self._events: list[tuple[str, str, str]] = []
+        for migration_id in applied or []:
+            self._events.append((migration_id, "2000-01-01 00:00:00", "APPLIED"))
         self._migration_table_ready = False
         self._locked_flag = False
         self._closed = False
         self._cursor_count = 0
+        self._oplog: list[tuple[str, str | None]] = []
         self.DatabaseError = FakeDatabaseError
         self.db_host = kwargs.get("db_host")
         self.db_port = kwargs.get("db_port")
@@ -68,12 +72,25 @@ class FakeBackend(DatabaseBackend, driver=_FakeDriver):
         self._in_transaction = False
         self._connection = _FakeConnection()
 
-    # ------------------------------------------------------------------
-    # Public state for test inspection.
-    # ------------------------------------------------------------------
     @property
-    def applied_list(self) -> list[tuple[str, str | None, str | None, Any]]:
-        return list(self._applied)
+    def applied_list(self) -> list[str]:
+        latest: dict[str, tuple[str, str, str]] = {}
+        for event in self._events:
+            latest[event[0]] = event
+        return [
+            migration_id
+            for migration_id, event in latest.items()
+            if event[2] == "APPLIED"
+        ]
+
+    @property
+    def events(self) -> list[tuple[str, str, str]]:
+        return list(self._events)
+
+    @property
+    def oplog(self) -> list[tuple[str, str | None]]:
+        """Operation log: list of (operation, key)."""
+        return list(self._oplog)
 
     @property
     def closed(self) -> bool:
@@ -91,9 +108,6 @@ class FakeBackend(DatabaseBackend, driver=_FakeDriver):
     def migration_table_ready(self) -> bool:
         return self._migration_table_ready
 
-    # ------------------------------------------------------------------
-    # Connection plumbing.
-    # ------------------------------------------------------------------
     def connect(self) -> _FakeConnection:
         return _FakeConnection()
 
@@ -102,39 +116,35 @@ class FakeBackend(DatabaseBackend, driver=_FakeDriver):
 
     def cursor(self) -> _FakeCursor:
         self._cursor_count += 1
+        self._oplog.append(("cursor", None))
         return _FakeCursor()
 
     def begin(self) -> None:
         self._in_transaction = True
+        self._oplog.append(("begin", None))
 
     def commit(self) -> None:
         self._in_transaction = False
+        self._oplog.append(("commit", None))
 
     def rollback(self) -> None:
         self._in_transaction = False
-
-    def savepoint(self, id: str) -> None:
-        pass
-
-    def savepoint_rollback(self, id: str) -> None:
-        pass
+        self._oplog.append(("rollback", None))
 
     def close(self) -> None:
         self._closed = True
 
     @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[None]:
+    def lock(self, timeout: int | None = None) -> Generator[Lock]:
         self._locked_flag = True
-        yield
+        with Lock() as lock_obj:
+            yield lock_obj
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
         self.rollback()
         yield
 
-    # ------------------------------------------------------------------
-    # Table / migrations history.
-    # ------------------------------------------------------------------
     def list_tables(self) -> list[str]:
         return [self.migration_table] if self._migration_table_ready else []
 
@@ -149,15 +159,9 @@ class FakeBackend(DatabaseBackend, driver=_FakeDriver):
     def _copy_versions(self) -> None:
         pass
 
-    def _applied_migrations(self) -> list[tuple[Any, ...]]:
-        return list(self._applied)
+    def _migration_history(self) -> list[tuple[Any, ...]]:
+        return list(self._events)
 
-    def mark_applied(self, migration_id: str, content_hash: str | None, comment: str | None = None, applied_at: Any = None) -> None:
-        self._applied = [r for r in self._applied if r[0] != migration_id]
-        self._applied.append((migration_id, content_hash, comment, applied_at))
-
-    def unmark(self, migration_id: str) -> None:
-        self._applied = [r for r in self._applied if r[0] != migration_id]
-
-    def is_applied(self, migration_id: str) -> bool:
-        return any(r[0] == migration_id for r in self._applied)
+    def mark(self, migration_id: str, status: str) -> None:
+        self._events.append((migration_id, "2000-01-01 00:00:00", status))
+        self._oplog.append(("mark", migration_id))

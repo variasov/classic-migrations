@@ -6,32 +6,37 @@ import pytest
 from classic.migrations.cli import (
     build_parser,
     cmd_apply,
-    cmd_develop,
     cmd_list,
-    cmd_mark,
-    cmd_new,
-    cmd_reapply,
     cmd_rollback,
-    cmd_unmark,
     main,
 )
 
 
 @pytest.fixture
-def mock_migrations() -> MagicMock:
+def mock_migrator() -> MagicMock:
+    mock = MagicMock()
+    mock.history.return_value = []
+    return mock
+
+
+@pytest.fixture
+def mock_collection() -> MagicMock:
     mock = MagicMock()
     mock.list.return_value = []
-    mock.new.return_value = "/fake/path/20250101_01_abcde_add.sql"
+    mock.to_apply.return_value = ({}, [])
+    mock.to_rollback.return_value = ({}, [])
     return mock
 
 
 def _run_cmd(
     func: Callable[[argparse.Namespace], int],
     args: argparse.Namespace,
-    mock_migrations: MagicMock,
+    mock_migrator: MagicMock,
+    mock_collection: MagicMock,
 ) -> int:
     with (
-        patch("classic.migrations.cli._make_migrations", return_value=mock_migrations),
+        patch("classic.migrations.cli._make_migrator", return_value=mock_migrator),
+        patch("classic.migrations.cli._make_collection", return_value=mock_collection),
         patch("classic.migrations.cli.Settings"),
     ):
         return func(args)
@@ -47,290 +52,224 @@ class TestParser:
         parser = build_parser()
         args = parser.parse_args(["apply"])
         assert args.command == "apply"
-        assert args.match is None
-        assert args.revision is None
-        assert args.all is False
-        assert args.force is False
-        assert args.one is False
-        assert args.skip_hash_check is False
+        assert args.migration_name is None
+        assert args.fake is False
+        assert args.plan is False
 
     def test_apply_full(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(
-            ["apply", "-m", "0001", "-r", "0002", "-a", "-f", "-1", "--skip-hash-check"]
-        )
-        assert args.match == "0001"
-        assert args.revision == "0002"
-        assert args.all is True
-        assert args.force is True
-        assert args.one is True
-        assert args.skip_hash_check is True
-
-    def test_develop_defaults(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["develop"])
-        assert args.command == "develop"
-        assert args.n == 1
-        assert args.skip_hash_check is False
-
-    def test_develop_full(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["develop", "-n", "3", "--skip-hash-check"])
-        assert args.n == 3
-        assert args.skip_hash_check is True
+        args = parser.parse_args(["apply", "0001.init", "--fake", "--plan"])
+        assert args.migration_name == "0001.init"
+        assert args.fake is True
+        assert args.plan is True
 
     def test_list_defaults(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["list"])
-        assert args.match is None
+        assert args.command == "list"
+        assert args.history is False
 
-    def test_list_with_match(self) -> None:
+    def test_list_with_history(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["list", "-m", "0001"])
-        assert args.match == "0001"
+        args = parser.parse_args(["list", "--history"])
+        assert args.history is True
 
     def test_rollback_defaults(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["rollback"])
-        assert args.match is None
-        assert args.revision is None
-        assert args.all is False
-        assert args.force is False
+        assert args.command == "rollback"
+        assert args.migration_name is None
+        assert args.fake is False
+        assert args.plan is False
 
     def test_rollback_full(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["rollback", "-m", "0001", "-r", "0002", "-a", "-f"])
-        assert args.match == "0001"
-        assert args.revision == "0002"
-        assert args.all is True
-        assert args.force is True
-
-    def test_reapply_defaults(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["reapply"])
-        assert args.match is None
-        assert args.revision is None
-        assert args.force is False
-        assert args.skip_hash_check is False
-
-    def test_reapply_full(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(
-            ["reapply", "-m", "0001", "-r", "0002", "-f", "--skip-hash-check"]
-        )
-        assert args.match == "0001"
-        assert args.revision == "0002"
-        assert args.force is True
-        assert args.skip_hash_check is True
-
-    def test_mark_defaults(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["mark"])
-        assert args.match is None
-        assert args.revision is None
-        assert args.all is False
-
-    def test_mark_full(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["mark", "-m", "0001", "-r", "0002", "-a"])
-        assert args.match == "0001"
-        assert args.revision == "0002"
-        assert args.all is True
-
-    def test_unmark_defaults(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["unmark"])
-        assert args.match is None
-        assert args.revision is None
-
-    def test_unmark_full(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["unmark", "-m", "0001", "-r", "0002"])
-        assert args.match == "0001"
-        assert args.revision == "0002"
-
-    def test_new_defaults(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["new"])
-        assert args.message == ""
-
-    def test_new_with_message(self) -> None:
-        parser = build_parser()
-        args = parser.parse_args(["new", "-m", "add users table"])
-        assert args.message == "add users table"
+        args = parser.parse_args(["rollback", "0001.init", "--fake", "--plan"])
+        assert args.migration_name == "0001.init"
+        assert args.fake is True
+        assert args.plan is True
 
     def test_verbosity(self) -> None:
         parser = build_parser()
         args = parser.parse_args(["apply", "-v", "-v", "-v"])
         assert args.verbosity == 3
 
+    def test_removed_commands_not_recognized(self) -> None:
+        parser = build_parser()
+        for command in ("develop", "reapply", "mark", "unmark", "new", "init"):
+            with pytest.raises(SystemExit):
+                parser.parse_args([command])
+
 
 class TestCmdApply:
-    def test_calls_migrations_apply(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match=None,
-            revision=None,
-            all=False,
-            force=False,
-            one=False,
-            skip_hash_check=False,
-        )
-        _run_cmd(cmd_apply, args, mock_migrations)
+    def test_calls_to_apply_and_apply(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock
+    ) -> None:
+        args = argparse.Namespace(migration_name=None, fake=False, plan=False)
+        _run_cmd(cmd_apply, args, mock_migrator, mock_collection)
 
-        mock_migrations.apply.assert_called_once_with(
-            match=None,
-            revision=None,
-            all=False,
-            force=False,
-            one=False,
-            check_hashes=True,
+        mock_collection.to_apply.assert_called_once_with([], target=None)
+        mock_migrator.apply.assert_called_once_with(
+            mock_migrator.lock.return_value.__enter__.return_value,
+            {},
+            [],
+            fake=False,
         )
 
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match="0001",
-            revision="0002",
-            all=True,
-            force=True,
-            one=True,
-            skip_hash_check=True,
-        )
-        _run_cmd(cmd_apply, args, mock_migrations)
+    def test_passes_target_fake(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock
+    ) -> None:
+        args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
+        _run_cmd(cmd_apply, args, mock_migrator, mock_collection)
 
-        mock_migrations.apply.assert_called_once_with(
-            match="0001",
-            revision="0002",
-            all=True,
-            force=True,
-            one=True,
-            check_hashes=False,
+        mock_collection.to_apply.assert_called_once_with([], target="0001.init")
+        mock_migrator.apply.assert_called_once_with(
+            mock_migrator.lock.return_value.__enter__.return_value,
+            {},
+            [],
+            fake=True,
         )
 
+    def test_plan_does_not_apply(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        args = argparse.Namespace(migration_name=None, fake=False, plan=True)
+        _run_cmd(cmd_apply, args, mock_migrator, mock_collection)
 
-class TestCmdDevelop:
-    def test_calls_migrations_develop(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(n=1, skip_hash_check=False)
-        _run_cmd(cmd_develop, args, mock_migrations)
-
-        mock_migrations.develop.assert_called_once_with(n=1, check_hashes=True)
-
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(n=3, skip_hash_check=True)
-        _run_cmd(cmd_develop, args, mock_migrations)
-
-        mock_migrations.develop.assert_called_once_with(n=3, check_hashes=False)
-
-
-class TestCmdList:
-    def test_calls_migrations_list(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(match=None)
-        _run_cmd(cmd_list, args, mock_migrations)
-
-        mock_migrations.list.assert_called_once()
+        mock_collection.to_apply.assert_called_once_with([], target=None)
+        mock_migrator.apply.assert_not_called()
 
 
 class TestCmdRollback:
-    def test_calls_migrations_rollback(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match=None, revision=None, all=False, force=False
-        )
-        _run_cmd(cmd_rollback, args, mock_migrations)
+    def test_calls_to_rollback_and_rollback(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock
+    ) -> None:
+        args = argparse.Namespace(migration_name=None, fake=False, plan=False)
+        _run_cmd(cmd_rollback, args, mock_migrator, mock_collection)
 
-        mock_migrations.rollback.assert_called_once_with(
-            match=None, revision=None, all=False, force=False
-        )
-
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match="0001", revision="0002", all=True, force=True
-        )
-        _run_cmd(cmd_rollback, args, mock_migrations)
-
-        mock_migrations.rollback.assert_called_once_with(
-            match="0001", revision="0002", all=True, force=True
+        mock_collection.to_rollback.assert_called_once_with([], target=None)
+        mock_migrator.rollback.assert_called_once_with(
+            mock_migrator.lock.return_value.__enter__.return_value,
+            {},
+            [],
+            fake=False,
         )
 
+    def test_passes_target_fake(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock
+    ) -> None:
+        args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
+        _run_cmd(cmd_rollback, args, mock_migrator, mock_collection)
 
-class TestCmdReapply:
-    def test_calls_migrations_reapply(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match=None, revision=None, force=False, skip_hash_check=False
-        )
-        _run_cmd(cmd_reapply, args, mock_migrations)
-
-        mock_migrations.reapply.assert_called_once_with(
-            match=None, revision=None, force=False, check_hashes=True
-        )
-
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(
-            match="0001", revision="0002", force=True, skip_hash_check=True
-        )
-        _run_cmd(cmd_reapply, args, mock_migrations)
-
-        mock_migrations.reapply.assert_called_once_with(
-            match="0001", revision="0002", force=True, check_hashes=False
+        mock_collection.to_rollback.assert_called_once_with([], target="0001.init")
+        mock_migrator.rollback.assert_called_once_with(
+            mock_migrator.lock.return_value.__enter__.return_value,
+            {},
+            [],
+            fake=True,
         )
 
+    def test_plan_does_not_rollback(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        args = argparse.Namespace(migration_name=None, fake=False, plan=True)
+        _run_cmd(cmd_rollback, args, mock_migrator, mock_collection)
 
-class TestCmdMark:
-    def test_calls_migrations_mark(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(match=None, revision=None, all=False)
-        _run_cmd(cmd_mark, args, mock_migrations)
-
-        mock_migrations.mark.assert_called_once_with(
-            match=None, revision=None, all=False
-        )
-
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(match="0001", revision="0002", all=True)
-        _run_cmd(cmd_mark, args, mock_migrations)
-
-        mock_migrations.mark.assert_called_once_with(
-            match="0001", revision="0002", all=True
-        )
+        mock_collection.to_rollback.assert_called_once_with([], target=None)
+        mock_migrator.rollback.assert_not_called()
 
 
-class TestCmdUnmark:
-    def test_calls_migrations_unmark(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(match=None, revision=None)
-        _run_cmd(cmd_unmark, args, mock_migrations)
+class TestCmdList:
+    def test_calls_list_and_history(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        args = argparse.Namespace(history=False)
+        _run_cmd(cmd_list, args, mock_migrator, mock_collection)
 
-        mock_migrations.unmark.assert_called_once_with(
-            match=None, revision=None
-        )
+        mock_collection.list.assert_called_once()
+        mock_migrator.history.assert_called()
 
-    def test_passes_all_params(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(match="0001", revision="0002")
-        _run_cmd(cmd_unmark, args, mock_migrations)
+    def test_history_flag(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from classic.migrations.migrations import Migration
 
-        mock_migrations.unmark.assert_called_once_with(
-            match="0001", revision="0002"
-        )
+        def make_migration(migration_id: str) -> Migration:
+            return Migration(migration_id, f"/fake/{migration_id}.sql")
 
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
+        ]
+        mock_collection.list.return_value = [
+            make_migration("0001.a"),
+            make_migration("0002.b"),
+        ]
+        args = argparse.Namespace(history=True)
+        _run_cmd(cmd_list, args, mock_migrator, mock_collection)
 
-class TestCmdNew:
-    def test_calls_migrations_new(self, mock_migrations: MagicMock) -> None:
-        args = argparse.Namespace(message="add stuff")
-        _run_cmd(cmd_new, args, mock_migrations)
+        mock_collection.list.assert_called_once()
 
-        mock_migrations.new.assert_called_once_with(message="add stuff")
+    def test_list_shows_status(
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from classic.migrations.migrations import Migration
+
+        def make_migration(migration_id: str) -> Migration:
+            m = Migration(migration_id, f"/fake/{migration_id}.sql")
+            return m
+
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
+        ]
+        mock_collection.list.return_value = [
+            make_migration("0001.a"),
+            make_migration("0002.b"),
+        ]
+        args = argparse.Namespace(history=False)
+        _run_cmd(cmd_list, args, mock_migrator, mock_collection)
+
+        output = capsys.readouterr().out
+        assert "0001.a" in output
+        assert "0002.b" in output
 
 
 class TestMain:
     def test_main_no_command_returns_1(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
-            patch("classic.migrations.cli._make_migrations"),
+            patch("classic.migrations.cli._make_migrator"),
+            patch("classic.migrations.cli._make_collection"),
             patch("classic.migrations.cli.Settings"),
         ):
             result = main([])
         assert result == 1
 
     def test_main_apply_returns_0(self) -> None:
-        mock = MagicMock()
+        mock_migrator = MagicMock()
+        mock_migrator.history.return_value = []
+        mock_collection = MagicMock()
+        mock_collection.to_apply.return_value = ({}, [])
         with (
-            patch("classic.migrations.cli._make_migrations", return_value=mock),
+            patch("classic.migrations.cli._make_migrator", return_value=mock_migrator),
+            patch("classic.migrations.cli._make_collection", return_value=mock_collection),
             patch("classic.migrations.cli.Settings"),
         ):
             result = main(["apply"])
+        assert result == 0
+
+    def test_main_list_returns_0(self) -> None:
+        mock_migrator = MagicMock()
+        mock_migrator.history.return_value = []
+        mock_collection = MagicMock()
+        mock_collection.list.return_value = []
+        with (
+            patch("classic.migrations.cli._make_migrator", return_value=mock_migrator),
+            patch("classic.migrations.cli._make_collection", return_value=mock_collection),
+            patch("classic.migrations.cli.Settings"),
+        ):
+            result = main(["list"])
         assert result == 0

@@ -19,16 +19,21 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations.backends.base import Backend, Lock
 
 
-class SQLiteBackend(DatabaseBackend, driver=sqlite3):
+def _utcnow_str() -> str:
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
+
+
+class SQLiteBackend(Backend, driver=sqlite3):
+
+    transactional_ddl = True
 
     def connect(self) -> sqlite3.Connection:
         conn = self.driver.connect(
             f"file:{self.db_name}?cache=shared",
             uri=True,
-            detect_types=self.driver.PARSE_DECLTYPES,
         )
         conn.isolation_level = None
         return conn
@@ -40,55 +45,43 @@ class SQLiteBackend(DatabaseBackend, driver=sqlite3):
     def _create_migration_table(self) -> None:
         self.execute(
             f"CREATE TABLE {self.migration_table_quoted} ("
-            "migration_id VARCHAR(255) PRIMARY KEY, "
-            "content_hash VARCHAR(64) NULL, "
-            "applied_at TIMESTAMP NOT NULL, "
-            "comment VARCHAR(255) NULL)"
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "migration_id VARCHAR(255) NOT NULL, "
+            "created_at TIMESTAMP NOT NULL, "
+            "status VARCHAR(16) NOT NULL)"
         )
 
     def _copy_versions(self) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, content_hash, applied_at, comment) "
-            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "SELECT migration_id, applied_at_utc, 'APPLIED' "
             f"FROM {self.versions_table_quoted}"
         )
 
-    def _applied_migrations(self) -> list[tuple[Any, ...]]:
+    def _migration_history(self) -> list[tuple[Any, ...]]:
         cursor = self.execute(
-            "SELECT migration_id, content_hash, applied_at, comment "
-            f"FROM {self.migration_table_quoted} ORDER BY applied_at, migration_id"
+            "SELECT migration_id, created_at, status "
+            f"FROM {self.migration_table_quoted} ORDER BY id"
         )
         return [tuple(row) for row in cursor.fetchall()]
 
-    def mark_applied(self, migration_id: str, content_hash: str | None, comment: str | None = None, applied_at: datetime | None = None) -> None:
-        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    def mark(self, migration_id: str, status: str) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, content_hash, applied_at, comment) "
-            "VALUES (?, ?, ?, ?)",
-            (migration_id, content_hash, applied_at, comment),
-        )
-
-    def unmark(self, migration_id: str) -> None:
-        self.execute(
-            f"DELETE FROM {self.migration_table_quoted} WHERE migration_id = ?",
-            (migration_id,),
+            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "VALUES (?, ?, ?)",
+            (migration_id, _utcnow_str(), status),
         )
 
     @contextmanager
-    def lock(self, timeout: int | None = None) -> Generator[None]:
-        """
-        Acquire a session-scoped lock by starting an immediate (write)
-        transaction on the connection and holding it for the duration of the
-        block. SQLite releases the underlying file lock automatically when the
-        connection is closed, including on abnormal process termination.
-        """
+    def lock(self, timeout: int | None = None) -> Generator[Lock]:
         self.begin_immediate()
-        try:
-            yield
-            self.commit()
-        except BaseException:
-            self.rollback()
-            raise
+        with Lock() as lock_obj:
+            try:
+                yield lock_obj
+                self.commit()
+            except BaseException:
+                self.rollback()
+                raise
 
     def begin_immediate(self) -> None:
         assert not self._in_transaction
@@ -97,8 +90,4 @@ class SQLiteBackend(DatabaseBackend, driver=sqlite3):
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
-        """
-        SQLite DDL is always transactional and cannot run outside the lock
-        transaction, so this is a no-op.
-        """
         yield

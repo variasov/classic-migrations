@@ -13,16 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations.backends.base import Backend
 
 
-class OracleBackend(DatabaseBackend):
+class OracleBackend(Backend):
 
     def begin(self):
-        """Oracle is always in a transaction, and has no "BEGIN" statement."""
         self._in_transaction = True
 
     def connect(self, dburi):
@@ -31,8 +29,6 @@ class OracleBackend(DatabaseBackend):
             kwargs["user"] = dburi.username
         if dburi.password is not None:
             kwargs["password"] = dburi.password
-        # Oracle combines the hostname, port and database into a single DSN.
-        # The DSN can also be a "net service name"
         kwargs["dsn"] = ""
         if dburi.hostname is not None:
             kwargs["dsn"] = dburi.hostname
@@ -53,47 +49,35 @@ class OracleBackend(DatabaseBackend):
     def _create_migration_table(self):
         self.execute(
             "CREATE TABLE {0} ("
-            "migration_id VARCHAR2(255) PRIMARY KEY, "
-            "content_hash VARCHAR2(64) NULL, "
-            "applied_at TIMESTAMP NOT NULL, "
-            "comment VARCHAR2(255) NULL)".format(self.migration_table_quoted)
+            "id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
+            "migration_id VARCHAR2(255) NOT NULL, "
+            "created_at TIMESTAMP NOT NULL, "
+            "status VARCHAR2(16) NOT NULL)".format(self.migration_table_quoted)
         )
 
     def _copy_versions(self):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "SELECT migration_id, NULL, applied_at_utc, NULL "
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "SELECT migration_id, applied_at_utc, 'APPLIED' "
             "FROM {1}".format(self.migration_table_quoted, self.versions_table_quoted)
         )
 
-    def _applied_migrations(self):
+    def _migration_history(self):
         cursor = self.execute(
-            "SELECT migration_id, content_hash, applied_at, comment "
-            "FROM {0} ORDER BY applied_at, migration_id".format(
-                self.migration_table_quoted
-            )
+            "SELECT migration_id, created_at, status "
+            "FROM {0} ORDER BY id".format(self.migration_table_quoted)
         )
         return [tuple(row) for row in cursor.fetchall()]
 
-    def mark_applied(self, migration_id, content_hash, comment=None, applied_at=None):
-        applied_at = applied_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    def mark(self, migration_id, status):
         self.execute(
-            "INSERT INTO {0} (migration_id, content_hash, applied_at, comment) "
-            "VALUES (:migration_id, :content_hash, :applied_at, :comment)".format(
+            "INSERT INTO {0} (migration_id, created_at, status) "
+            "VALUES (:migration_id, :created_at, :status)".format(
                 self.migration_table_quoted
             ),
             {
                 "migration_id": migration_id,
-                "content_hash": content_hash,
-                "applied_at": applied_at,
-                "comment": comment,
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                "status": status,
             },
-        )
-
-    def unmark(self, migration_id):
-        self.execute(
-            "DELETE FROM {0} WHERE migration_id = :migration_id".format(
-                self.migration_table_quoted
-            ),
-            {"migration_id": migration_id},
         )

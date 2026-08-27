@@ -34,23 +34,14 @@ classic-migrations
     # имя таблицы истории (опционально, по умолчанию "migrations")
     MIGRATIONS_TABLE=migrations
 
-    # схема таблицы истории (опционально)
-    MIGRATIONS_SCHEMA=
-
     # настройки подключения к базе данных
-    DATABASE_DRIVER=sqlite
+    DATABASE_DRIVER=sqlite3
     DATABASE_USER=
     DATABASE_USER_DOMAIN=
     DATABASE_PASSWORD=
     DATABASE_HOST=
     DATABASE_PORT=
     DATABASE_NAME=./db.sqlite
-
-Настройки базы данных собираются в строку подключения:
-
-.. code-block:: text
-
-    DATABASE_DRIVER://DATABASE_USER[:DATABASE_PASSWORD]@DATABASE_HOST[:DATABASE_PORT]/DATABASE_NAME
 
 Если задан ``DATABASE_USER_DOMAIN``, то имя пользователя формируется как
 ``DOMAIN\USER``.
@@ -69,12 +60,9 @@ classic-migrations
    * - ``MIGRATIONS_TABLE``
      - имя таблицы истории
      - ``migrations``
-   * - ``MIGRATIONS_SCHEMA``
-     - схема таблицы истории
-     - *(текущая схема)*
    * - ``DATABASE_DRIVER``
-     - драйвер подключения
-     - ``sqlite``
+     - имя модуля драйвера подключения (например ``sqlite3``, ``psycopg``)
+     - *(пусто)*
    * - ``DATABASE_USER``
      - имя пользователя БД
      - *(пусто)*
@@ -136,46 +124,20 @@ classic-migrations
 Команды
 -------
 
-Общие (глобальные) параметры, принимаемые всеми командами:
+Общий параметр, принимаемый всеми командами:
 
-* ``-d, --database URI`` — строка подключения (например
-  ``sqlite:///./db.sqlite``);
-* ``--migration-table NAME`` — имя таблицы истории;
-* ``--schema SCHEMA`` — схема таблицы истории;
-* ``-v`` — увеличить подробность вывода (можно повторять);
-* ``sources`` — позиционные аргументы с каталогами миграций.
-
-Настройки из окружения используются как значения по умолчанию.
-
-``init``
-~~~~~~~~
-
-Создаёт каталог миграций:
-
-.. code-block:: console
-
-    migrations init ./migrations
-
-``new``
-~~~~~~~
-
-Создаёт новый ``.sql`` файл миграции:
-
-.. code-block:: console
-
-    migrations new -m 'комментарий к имени файла' ./migrations
+* ``-v`` — увеличить подробность вывода (можно повторять).
 
 ``list``
 ~~~~~~~~
 
-Показывает все миграции и их статус:
+Показывает миграции источника и их статус в текущей БД:
 
 .. code-block:: console
 
     migrations list
 
-* ``-m, --match PATTERN`` — показать только миграции, чьи идентификаторы
-  соответствуют регулярному выражению.
+* ``--history`` — показать только применённые миграции.
 
 ``apply``
 ~~~~~~~~~
@@ -184,84 +146,32 @@ classic-migrations
 
 .. code-block:: console
 
-    migrations apply
+    migrations apply [migration_name]
 
-* ``-m, --match PATTERN`` — применить только подходящие миграции;
-* ``-r, --revision ID`` — применить указанную миграцию и все её зависимости;
-* ``-a, --all`` — применить все миграции, независимо от их статуса;
-* ``-f, --force`` — продолжать при ошибках (ошибки логируются, не прерывают
-  выполнение);
-* ``-1, --one`` — применить одну миграцию; если неприменённых нет — повторно
-  применить последнюю;
-* ``--skip-hash-check`` — отключить сверку хеша применённых миграций.
-
-``develop``
-~~~~~~~~~~~
-
-Применяет новые миграции; если новых нет — повторно применяет последние ``N``:
-
-.. code-block:: console
-
-    migrations develop
-
-* ``-n N`` — сколько последних миграций переприменять (по умолчанию ``1``);
-* ``--skip-hash-check`` — отключить сверку хеша.
+* ``migration_name`` — позиционный необязательный аргумент: применить миграции
+  до указанной включительно; без него — все доступные;
+* ``--fake`` — только создать записи в истории, без выполнения SQL миграций
+  и хуков;
+* ``--plan`` — не применять миграции, а только вывести список тех, которые
+  можно применить к текущей БД.
 
 ``rollback``
 ~~~~~~~~~~~~
 
-Откатывает миграции (в обратном порядке). По умолчанию откатывает одну —
-последнюю применённую — миграцию:
+Откатывает применённые миграции (в обратном топологическом порядке):
 
 .. code-block:: console
 
-    migrations rollback
+    migrations rollback [migration_name]
 
-* ``-m, --match PATTERN`` — откатить только подходящие миграции;
-* ``-r, --revision ID`` — откатить указанную миграцию и всё, что от неё зависит;
-* ``-a, --all`` — откатить все применённые миграции;
-* ``-f, --force`` — продолжать при ошибках.
+* ``migration_name`` — позиционный необязательный аргумент: откатить миграции
+  до указанной включительно; без него — все применённые;
+* ``--fake`` — только создать записи в истории, без выполнения SQL отката
+  и хуков;
+* ``--plan`` — не откатывать миграции, а только вывести список тех, которые
+  можно откатить в текущей БД.
 
 Для отката у миграции должен существовать ``.rollback.sql`` файл.
-
-``reapply``
-~~~~~~~~~~~
-
-Откатывает и заново применяет миграции:
-
-.. code-block:: console
-
-    migrations reapply
-
-* ``-m, --match PATTERN`` — выбрать подходящие миграции;
-* ``-r, --revision ID`` — выбрать указанную миграцию и её зависимости;
-* ``-f, --force`` — продолжать при ошибках;
-* ``--skip-hash-check`` — отключить сверку хеша.
-
-``mark``
-~~~~~~~~
-
-Помечает миграции применёнными без выполнения SQL:
-
-.. code-block:: console
-
-    migrations mark
-
-* ``-m, --match PATTERN`` — выбрать подходящие миграции;
-* ``-r, --revision ID`` — выбрать указанную миграцию и её зависимости;
-* ``-a, --all`` — выбрать все миграции.
-
-``unmark``
-~~~~~~~~~~
-
-Снимает отметку о применении без выполнения SQL отката:
-
-.. code-block:: console
-
-    migrations unmark
-
-* ``-m, --match PATTERN`` — выбрать подходящие миграции;
-* ``-r, --revision ID`` — выбрать указанную миграцию и её зависимости.
 
 
 Использование как библиотеки
@@ -269,42 +179,57 @@ classic-migrations
 
 .. code-block:: python
 
-    from classic.migrations import Migrations
+    from classic.migrations import Migrator, MigrationsCollection
 
-    m = Migrations(
-        source="./migrations",
-        database="sqlite:///./db.sqlite",
-        migration_table="migrations",   # опционально
-        schema=None,                    # опционально
-    )
+    db = Migrator(driver='sqlite3', db_name='db.sqlite')
+    migrations = MigrationsCollection('./migrations')
 
-    m.apply()
+    with db.lock() as lock:
+        history = db.history(lock)
+        hooks, unapplied = migrations.to_apply(history)
+        db.apply(lock, hooks, unapplied)
 
-Все параметры конструктора необязательны: неуказанные значения берутся из
-настроек окружения (``SOURCES``, ``DATABASE_*``, ``MIGRATIONS_TABLE``,
-``MIGRATIONS_SCHEMA``).
+``MigrationsCollection`` работает только с источниками миграций (каталогами
+``.sql`` файлов) и не имеет доступа к БД:
 
-Доступные методы соответствуют командам CLI: ``list()``, ``new()``, ``apply()``,
-``develop()``, ``rollback()``, ``reapply()``, ``mark()``, ``unmark()``,
-``is_applied()``.
+* ``list()`` — список миграций источника, отсортированный топологически;
+* ``to_apply(history, target=None)`` — по логу событий истории вычисляет
+  применённые и возвращает ``(hooks, migrations)``: хуки и неприменённые
+  миграции в топологическом порядке; ``target`` — «до указанной включительно»;
+* ``to_rollback(history, target=None)`` — аналогично, но возвращает
+  применённые миграции в обратном топологическом порядке.
+
+``Migrator`` принимает параметры БД, выбирает ``Backend`` по имени драйвера
+и выполняет миграции:
+
+* ``lock()`` — контекстный менеджер advisory-лока; полученный lock передаётся
+  в остальные методы;
+* ``history(lock)`` — лог событий таблицы истории;
+* ``apply(lock, hooks, migrations, fake=False)`` — применяет миграции;
+  ``fake=True`` — только записи в истории, без SQL и хуков;
+* ``rollback(lock, hooks, migrations, fake=False)`` — откатывает миграции
+  (аналогично ``apply``);
+* ``close()`` / контекстный менеджер — закрывают соединение.
 
 
 Схема таблицы истории
 ---------------------
 
-Библиотека создаёт одну служебную таблицу:
+Библиотека создаёт одну служебную таблицу — append-only лог событий:
 
 .. code-block:: sql
 
-    CREATE TABLE {schema}.{migration_table} (
-        migration_id VARCHAR(255) PRIMARY KEY,
-        content_hash VARCHAR(64) NULL,
+    CREATE TABLE {migration_table} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        migration_id VARCHAR(255) NOT NULL,
         applied_at   TIMESTAMP NOT NULL,
-        comment      VARCHAR(255) NULL
+        comment      VARCHAR(255) NULL,
+        status       VARCHAR(16) NOT NULL  -- 'applied' | 'rolled_back'
     );
 
-``content_hash`` — это ``sha256`` тела миграции. Перед применением библиотека
-сверяет хеш уже применённых миграций и отказывается работать, если они были
-изменены задним числом (исключение ``MigrationHashMismatch``). Сверку можно
-отключить флагом ``--skip-hash-check``; такие миграции записываются с
-``content_hash = NULL`` и впоследствии не проверяются.
+Каждое применение или откат миграции дописывает строку-событие. Актуальный
+статус миграции определяется её последним событием. Сверка хешей применённых
+миграций не выполняется.
+
+При первом запуске данные из legacy-таблицы ``versions`` (yoyo-migrations)
+переносятся как события ``applied``; сама таблица не удаляется.

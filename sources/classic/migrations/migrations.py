@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import datetime
-import hashlib
 import os
 import re
 from collections import OrderedDict
@@ -25,8 +23,7 @@ from logging import getLogger
 from typing import Any
 
 import sqlparse
-from classic.migrations import exceptions, utils
-from classic.migrations.backends.base import DatabaseBackend
+from classic.migrations import exceptions
 
 logger = getLogger("classic.migrations")
 
@@ -36,15 +33,12 @@ DirectivesType = dict[str, str]
 
 
 def _is_migration_file(path: str) -> bool:
-    """
-    Return True if the given path matches a migration file pattern
-    """
     _, extension = os.path.splitext(path)
     return extension == ".sql"
 
 
 def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
-    directive_names = ["transactional", "depends", "comment"]
+    directive_names = ["transactional", "depends"]
     comment_or_empty = re.compile(r"^(\s*|\s*--.*)$").match
     directive_pattern = re.compile(
         r"^\s*--\s*({})\s*:\s*(.*)$".format("|".join(map(re.escape, directive_names)))
@@ -91,11 +85,10 @@ class Migration:
         self.path = path
         self.source_dir = source_dir
         self.depends: set[str] = set()
-        self.transactional = True
-        self.comment = ""
+        self.transactional: bool | None = None
+        self.rollback_transactional: bool | None = None
         self.apply_statements: list[str] = []
         self.rollback_statements: list[str] = []
-        self.content_hash: str | None = None
         self._loaded = False
 
     def __repr__(self) -> str:
@@ -106,24 +99,40 @@ class Migration:
             return
 
         directives, statements = read_sql(self.path)
-        _, rollback_statements = read_sql(self._rollback_path())
+        rb_directives, rollback_statements = read_sql(self._rollback_path())
 
-        self.depends = {d for d in directives.get("depends", "").split() if d}
-        transactional = directives.get("transactional", "true").lower()
-        if transactional not in {"true", "false"}:
+        self.depends = {d.strip() for d in directives.get("depends", "").split(",") if d.strip()}
+        transactional_raw = directives.get("transactional")
+        if transactional_raw is None:
+            self.transactional = None
+        elif transactional_raw.lower() in {"true", "false"}:
+            self.transactional = transactional_raw.lower() == "true"
+        else:
             raise exceptions.BadMigration(
-                "Invalid transactional directive {!r} in {}".format(
-                    directives.get("transactional"), self.path
-                )
+                f"Invalid transactional directive {transactional_raw!r} in {self.path}"
             )
-        self.transactional = transactional == "true"
-        self.comment = directives.get("comment", "")
+
+        self._load_rollback_directives(rb_directives)
+
         self.apply_statements = statements
         self.rollback_statements = rollback_statements
-
-        body = "\n".join(statements)
-        self.content_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
         self._loaded = True
+
+    def _load_rollback_directives(self, rb_directives: DirectivesType) -> None:
+        for k in rb_directives:
+            if k != "transactional":
+                raise exceptions.BadMigration(
+                    f"Invalid directive {k!r} in rollback file {self._rollback_path()}"
+                )
+        transactional_raw = rb_directives.get("transactional")
+        if transactional_raw is None:
+            self.rollback_transactional = None
+        elif transactional_raw.lower() in {"true", "false"}:
+            self.rollback_transactional = transactional_raw.lower() == "true"
+        else:
+            raise exceptions.BadMigration(
+                f"Invalid transactional directive {transactional_raw!r} in rollback file {self._rollback_path()}"
+            )
 
     def _rollback_path(self) -> str:
         base, ext = os.path.splitext(self.path)
@@ -135,51 +144,25 @@ class Hook:
     def __init__(self, name: str, path: str) -> None:
         self.name = name
         self.path = path
-        self.transactional = True
         self.statements: list[str] = []
         self._loaded = False
 
     def load(self) -> None:
         if self._loaded:
             return
-        directives, statements = read_sql(self.path)
-        transactional = directives.get("transactional", "true").lower()
-        self.transactional = transactional == "true"
+        _directives, statements = read_sql(self.path)
         self.statements = statements
         self._loaded = True
 
 
-class Migrations:
+class MigrationsCollection:
+    """Collection of migrations read from one or more source directories."""
 
-    def __init__(
-        self,
-        sources: str | list[str],
-        driver: str,
-        db_host: str | None = None,
-        db_port: int | None = None,
-        db_name: str | None = None,
-        db_user: str | None = None,
-        db_password: str | None = None,
-        db_args: dict[str, Any] | None = None,
-        migration_table: str | None = None,
-    ):
+    def __init__(self, sources: str | list[str]):
         if not sources:
             raise ValueError("sources must not be empty")
-        if not driver:
-            raise ValueError("driver must not be empty")
         self.sources = sources
-        self.driver = driver
-        self.db_host = db_host
-        self.db_port = db_port
-        self.db_name = db_name
-        self.db_user = db_user
-        self.db_password = db_password
-        self.db_args = db_args
-        self.migration_table = migration_table or 'migrations'
 
-    # ------------------------------------------------------------------
-    # Source reading
-    # ------------------------------------------------------------------
     def _sources(self) -> list[str]:
         if isinstance(self.sources, str):
             return [self.sources]
@@ -217,9 +200,6 @@ class Migrations:
                     hooks[name].append(Hook(name, path))
         return hooks
 
-    # ------------------------------------------------------------------
-    # Graph helpers
-    # ------------------------------------------------------------------
     @staticmethod
     def _load_all(migrations: Iterable[Migration]) -> None:
         for m in migrations:
@@ -232,7 +212,7 @@ class Migrations:
         for m in ml:
             for d in m.depends:
                 if d not in all_ids:
-                    raise exceptions.BadMigration(
+                    raise exceptions.NoMigration(
                         f"Could not resolve dependency {d!r} in {m.path}"
                     )
         dependency_graph = {m: {by_id[d] for d in m.depends} for m in ml}
@@ -245,396 +225,56 @@ class Migrations:
                 )
             )
 
-    def _heads(self, migrations: Iterable[Migration]) -> set[Migration]:
-        by_id = {m.id: m for m in migrations}
-        result = set(migrations)
-        for m in migrations:
-            for d in m.depends:
-                result.discard(by_id.get(d))
-        return result
-
-    def _ancestors(self, migration: Migration, population: Iterable[Migration]) -> set[Migration]:
-        by_id = {m.id: m for m in population}
-        deps: set[Migration] = set()
-        to_process = {by_id[d] for d in migration.depends if d in by_id}
-        while to_process:
-            m = to_process.pop()
-            deps.add(m)
-            for d in m.depends:
-                if d in by_id and by_id[d] not in deps:
-                    to_process.add(by_id[d])
-        return deps
-
-    def _descendants(self, migration: Migration, population: Iterable[Migration]) -> set[Migration]:
-        population = set(population)
-        descendants = {migration}
-        descendant_ids = {migration.id}
-        while True:
-            found = False
-            for m in population - descendants:
-                if m.depends & descendant_ids:
-                    descendants.add(m)
-                    descendant_ids.add(m.id)
-                    found = True
-            if not found:
-                break
-        descendants.remove(migration)
-        return descendants
-
-    def _to_revision(self, migrations: Iterable[Migration], revision: str, direction: str) -> list[Migration]:
-        targets = [m for m in migrations if revision in m.id]
-        if not targets:
-            raise ValueError(f"'{revision}' doesn't match any revisions.")
-        if len(targets) > 1:
-            raise ValueError(
-                "'{}' matches multiple revisions: {}".format(
-                    revision, ", ".join(m.id for m in targets)
-                )
-            )
-        target = targets[0]
-        if direction == "apply":
-            selected = self._ancestors(target, migrations) | {target}
-        else:
-            selected = self._descendants(target, migrations) | {target}
-        return [m for m in migrations if m in selected]
-
-    def _filter(self, migrations: Iterable[Migration], match: str | None = None, revision: str | None = None, direction: str = "apply") -> list[Migration]:
-        result = list(migrations)
-        if match:
-            search = re.compile(match).search
-            result = [m for m in result if search(m.id)]
-        if revision:
-            result = self._to_revision(result, revision, direction)
-        return result
-
-    # ------------------------------------------------------------------
-    # Backend helpers
-    # ------------------------------------------------------------------
-    def _get_backend(self) -> "DatabaseBackend":
-        backend_class = DatabaseBackend.get_backend_class(self.driver)
-        return backend_class(
-            db_host=self.db_host,
-            db_port=self.db_port,
-            db_name=self.db_name,
-            db_user=self.db_user,
-            db_password=self.db_password,
-            db_args=self.db_args,
-            migration_table=self.migration_table,
-        )
-
     @staticmethod
-    def _applied_ids(backend: "DatabaseBackend") -> dict[str, tuple[Any, ...]]:
-        return {row[0]: row for row in backend.applied_migrations()}
+    def _applied_ids(history: Iterable[tuple[Any, ...]]) -> set[str]:
+        latest: dict[str, str] = {}
+        for row in history:
+            latest[row[0]] = row[2]
+        return {migration_id for migration_id, status in latest.items() if status == "APPLIED"}
 
-    def _check_hashes(self, migrations: Iterable[Migration], applied: dict[str, tuple[Any, ...]]) -> None:
-        changed: list[str] = []
-        for m in migrations:
-            if m.id in applied:
-                stored_hash = applied[m.id][1]
-                if stored_hash is not None and stored_hash != m.content_hash:
-                    changed.append(m.id)
-        if changed:
-            raise exceptions.MigrationHashMismatch(changed)
-
-    def _select_apply(self, migrations: Iterable[Migration], match: str | None, revision: str | None, all: bool, applied: dict[str, tuple[Any, ...]]) -> list[Migration]:
-        result = self._filter(migrations, match, revision, "apply")
-        result = self._topological(result)
-        if not all:
-            result = [m for m in result if m.id not in applied]
-        return result
-
-    def _select_rollback(self, migrations: Iterable[Migration], match: str | None, revision: str | None, applied: dict[str, tuple[Any, ...]]) -> list[Migration]:
-        result = self._filter(migrations, match, revision, "rollback")
-        result = [m for m in result if m.id in applied]
-        result = list(reversed(self._topological(result)))
-        return result
-
-    def _last_applied(self, migrations: Iterable[Migration], applied: dict[str, tuple[Any, ...]], n: int = 1) -> list[Migration]:
-        ordered = [m for m in self._topological(migrations) if m.id in applied]
-        return ordered[-n:] if ordered else []
-
-    # ------------------------------------------------------------------
-    # Execution helpers
-    # ------------------------------------------------------------------
-    def _apply_one(self, backend: "DatabaseBackend", migration: Migration, force: bool = False) -> None:
-        logger.info("Applying %s", migration.id)
-        if migration.transactional:
-            context = backend.transaction()
-        else:
-            context = backend.disable_transactions()
-        with context:
-            for stmt in migration.apply_statements:
-                self._execute_statement(backend, stmt, migration, "apply", force)
-
-    def _rollback_one(self, backend: "DatabaseBackend", migration: Migration, force: bool = False) -> None:
-        logger.info("Rolling back %s", migration.id)
-        if not migration.rollback_statements:
-            return
-        if migration.transactional:
-            context = backend.transaction()
-        else:
-            context = backend.disable_transactions()
-        with context:
-            for stmt in migration.rollback_statements:
-                self._execute_statement(backend, stmt, migration, "rollback", force)
-
-    @staticmethod
-    def _execute_statement(backend: "DatabaseBackend", stmt: str, migration: Migration, direction: str, force: bool) -> None:
-        try:
-            cursor = backend.cursor()
-            try:
-                logger.debug(" - executing %r", stmt)
-                cursor.execute(stmt)
-            finally:
-                cursor.close()
-        except backend.DatabaseError:
-            if force:
-                logger.exception("Ignored error %sing %s", direction, migration.id)
-            else:
-                raise
-
-    def _run_hooks(self, backend: "DatabaseBackend", hooks: list[Hook]) -> None:
-        for hook in hooks:
-            hook.load()
-            if not hook.statements:
-                continue
-            if hook.transactional:
-                context = backend.transaction()
-            else:
-                context = backend.disable_transactions()
-            with context:
-                for stmt in hook.statements:
-                    cursor = backend.cursor()
-                    try:
-                        cursor.execute(stmt)
-                    finally:
-                        cursor.close()
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-    def list(self) -> list[tuple[str, str, str]]:
-        backend = self._get_backend()
-        try:
-            backend.ensure_migration_table()
-            migrations = self._read_migrations()
-            self._load_all(migrations)
-            applied = self._applied_ids(backend)
-            ordered = self._topological(migrations)
-            return [
-                ("A" if m.id in applied else "U", m.id, m.source_dir or "")
-                for m in ordered
-            ]
-        finally:
-            backend.close()
-
-    def is_applied(self, migration_id: str) -> bool:
-        backend = self._get_backend()
-        try:
-            backend.ensure_migration_table()
-            return backend.is_applied(migration_id)
-        finally:
-            backend.close()
-
-    def apply(
-        self,
-        match: str | None = None,
-        revision: str | None = None,
-        all: bool = False,
-        force: bool = False,
-        one: bool = False,
-        check_hashes: bool = True,
-    ) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                if check_hashes:
-                    self._check_hashes(migrations, applied)
-                to_apply = self._select_apply(migrations, match, revision, all, applied)
-                if one:
-                    if to_apply:
-                        to_apply = to_apply[:1]
-                    else:
-                        to_apply = self._last_applied(migrations, applied)
-                hooks = self._read_hooks()
-                self._run_hooks(backend, hooks["pre-apply"])
-                for m in to_apply:
-                    self._apply_one(backend, m, force)
-                    content_hash = m.content_hash if check_hashes else None
-                    backend.mark_applied(m.id, content_hash, m.comment)
-                self._run_hooks(backend, hooks["post-apply"])
-        finally:
-            backend.close()
-
-    def develop(self, n: int = 1, check_hashes: bool = True) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                if check_hashes:
-                    self._check_hashes(migrations, applied)
-                to_apply = self._select_apply(migrations, None, None, False, applied)
-                hooks = self._read_hooks()
-                if to_apply:
-                    self._run_hooks(backend, hooks["pre-apply"])
-                    for m in to_apply:
-                        self._apply_one(backend, m, False)
-                        content_hash = m.content_hash if check_hashes else None
-                        backend.mark_applied(m.id, content_hash, m.comment)
-                    self._run_hooks(backend, hooks["post-apply"])
-                else:
-                    to_reapply = self._last_applied(migrations, applied, n)
-                    self._run_hooks(backend, hooks["pre-rollback"])
-                    for m in reversed(to_reapply):
-                        self._rollback_one(backend, m, False)
-                        backend.unmark(m.id)
-                    self._run_hooks(backend, hooks["post-rollback"])
-                    self._run_hooks(backend, hooks["pre-apply"])
-                    for m in to_reapply:
-                        self._apply_one(backend, m, False)
-                        content_hash = m.content_hash if check_hashes else None
-                        backend.mark_applied(m.id, content_hash, m.comment)
-                    self._run_hooks(backend, hooks["post-apply"])
-        finally:
-            backend.close()
-
-    def rollback(self, match: str | None = None, revision: str | None = None, all: bool = False, force: bool = False) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                to_rollback = self._select_rollback(
-                    migrations, match, revision, applied
-                )
-                if not revision and not all and len(to_rollback) > 1:
-                    to_rollback = to_rollback[:1]
-                hooks = self._read_hooks()
-                self._run_hooks(backend, hooks["pre-rollback"])
-                for m in to_rollback:
-                    self._rollback_one(backend, m, force)
-                    backend.unmark(m.id)
-                self._run_hooks(backend, hooks["post-rollback"])
-        finally:
-            backend.close()
-
-    def reapply(
-        self,
-        match: str | None = None,
-        revision: str | None = None,
-        force: bool = False,
-        check_hashes: bool = True,
-    ) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                if check_hashes:
-                    self._check_hashes(migrations, applied)
-                to_rollback = self._select_rollback(
-                    migrations, match, revision, applied
-                )
-                hooks = self._read_hooks()
-                self._run_hooks(backend, hooks["pre-rollback"])
-                for m in to_rollback:
-                    self._rollback_one(backend, m, force)
-                    backend.unmark(m.id)
-                self._run_hooks(backend, hooks["post-rollback"])
-                to_apply = list(reversed(to_rollback))
-                self._run_hooks(backend, hooks["pre-apply"])
-                for m in to_apply:
-                    self._apply_one(backend, m, force)
-                    content_hash = m.content_hash if check_hashes else None
-                    backend.mark_applied(m.id, content_hash, m.comment)
-                self._run_hooks(backend, hooks["post-apply"])
-        finally:
-            backend.close()
-
-    def mark(self, match: str | None = None, revision: str | None = None, all: bool = False) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                to_mark = self._select_apply(migrations, match, revision, all, applied)
-                for m in to_mark:
-                    backend.mark_applied(m.id, m.content_hash, m.comment)
-        finally:
-            backend.close()
-
-    def unmark(self, match: str | None = None, revision: str | None = None) -> None:
-        backend = self._get_backend()
-        try:
-            with backend.lock():
-                backend.ensure_migration_table()
-                migrations = self._read_migrations()
-                self._load_all(migrations)
-                applied = self._applied_ids(backend)
-                to_unmark = self._select_rollback(
-                    migrations, match, revision, applied
-                )
-                for m in to_unmark:
-                    backend.unmark(m.id)
-        finally:
-            backend.close()
-
-    def new(self, message: str = "") -> str:
-        sources = self._sources()
-        if not sources:
-            raise ValueError("Please specify a migrations directory")
-        directory = sources[0]
-        if not os.path.isdir(directory):
-            raise ValueError(f"Migrations directory does not exist: {directory}")
-
+    def list(self) -> list[Migration]:
         migrations = self._read_migrations()
         self._load_all(migrations)
-        heads = sorted(m.id for m in self._heads(migrations))
-        depends_str = "  ".join(heads)
+        return self._topological(migrations)
 
-        content = f"-- {message}\n-- depends: {depends_str}\n\n"
-        filename = make_filename(directory, message, ".sql")
-        with open(filename, "w", encoding="UTF-8") as f:
-            f.write(content)
-        return filename
+    def to_apply(
+        self,
+        history: Iterable[tuple[Any, ...]],
+        target: str | None = None,
+    ) -> tuple[dict[str, list[Hook]], list[Migration]]:
+        migrations = self.list()
+        applied = self._applied_ids(history)
+        result = [m for m in migrations if m.id not in applied]
+        if target is not None:
+            target_ids = {m.id for m in migrations}
+            if target not in target_ids:
+                raise exceptions.NoMigration(f"Migration {target!r} not found")
+            target_idx = next((i for i, m in enumerate(migrations) if m.id == target), -1)
+            keep_ids = {m.id for m in migrations[: target_idx + 1]}
+            result = [m for m in result if m.id in keep_ids]
+        hooks = self._read_hooks()
+        return hooks, result
 
-
-def make_filename(directory: str, message: str, extension: str) -> str:
-    lines = (line.strip() for line in message.split("\n"))
-    lines = (line for line in lines if line)
-    message_str = next(lines, None) or ""
-
-    if message_str:
-        slug = "-" + utils.slugify(message_str)
-    else:
-        slug = ""
-
-    datestr = datetime.datetime.now(datetime.UTC).date().strftime("%Y%m%d")
-    number = "01"
-    rand = utils.get_random_string(5)
-
-    for p in glob(os.path.join(directory, f"{datestr}_*")):
-        n = os.path.basename(p)[len(datestr) + 1 :].split("_")[0]
-        try:
-            if number <= n:
-                number = str(int(n) + 1).zfill(2)
-        except ValueError:
-            continue
-
-    return os.path.join(
-        directory,
-        f"{datestr}_{number}_{rand}{slug}{extension}",
-    )
+    def to_rollback(
+        self,
+        history: Iterable[tuple[Any, ...]],
+        target: str | None = None,
+    ) -> tuple[dict[str, list[Hook]], list[Migration]]:
+        migrations = self.list()
+        applied = self._applied_ids(history)
+        reversed_migrations = list(reversed(migrations))
+        result = [m for m in reversed_migrations if m.id in applied]
+        if target is not None:
+            target_ids = {m.id for m in migrations}
+            if target not in target_ids:
+                raise exceptions.NoMigration(f"Migration {target!r} not found")
+            target_idx = next((i for i, m in enumerate(migrations) if m.id == target), -1)
+            if target not in {m.id for m in result}:
+                result = []
+            else:
+                descendants: set[str] = {target}
+                for m in migrations[target_idx:]:
+                    descendants.add(m.id)
+                result = [m for m in result if m.id in descendants]
+        hooks = self._read_hooks()
+        return hooks, result

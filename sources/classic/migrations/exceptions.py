@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 class InvalidArgument(Exception):
     """Invalid CLI argument"""
 
@@ -35,19 +36,7 @@ class MigrationConflict(Exception):
     """
 
 
-from collections.abc import Iterable
-
-
-class MigrationHashMismatch(Exception):
+class NoMigration(Exception):
     """
-    One or more already-applied migrations have been modified since they
-    were applied.
+    The migration name could not be resolved
     """
-
-    def __init__(self, changed: Iterable[str]) -> None:
-        self.changed = list(changed)
-        super().__init__(
-            "Migrations have changed since they were applied: {}".format(
-                ", ".join(self.changed)
-            )
-        )

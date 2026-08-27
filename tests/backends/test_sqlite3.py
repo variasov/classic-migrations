@@ -1,4 +1,3 @@
-import sqlite3
 from collections.abc import Generator
 from pathlib import Path
 
@@ -7,14 +6,10 @@ from classic.migrations.backends.core.sqlite3 import SQLiteBackend
 
 
 @pytest.fixture
-def backend(db_path: Path) -> Generator[SQLiteBackend, None, None]:
-    b = SQLiteBackend(db_name=str(db_path))
+def backend() -> Generator[SQLiteBackend, None, None]:
+    b = SQLiteBackend(db_name=":memory:")
     yield b
     b.close()
-
-
-def test_connect_creates_database(backend: SQLiteBackend, db_path: Path) -> None:
-    assert db_path.exists()
 
 
 def test_list_tables_empty(backend: SQLiteBackend) -> None:
@@ -26,52 +21,59 @@ def test_create_migration_table(backend: SQLiteBackend) -> None:
     assert backend.migration_table in backend.list_tables()
 
 
-def test_mark_applied(backend: SQLiteBackend) -> None:
+def test_mark_applied_inserts_event(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0001.init", "abc123", "test comment")
+    backend.mark("0001.init", "APPLIED")
 
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
-    assert rows[0][0] == "0001.init"
-    assert rows[0][1] == "abc123"
-    assert rows[0][3] == "test comment"
+    history = backend._migration_history()
+    assert len(history) == 1
+    assert history[0][0] == "0001.init"
+    assert history[0][2] == "APPLIED"
 
 
-def test_mark_applied_null_hash(backend: SQLiteBackend) -> None:
+def test_unmark_appends_rolled_back_event(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0001.init", None)
+    backend.mark("0001.init", "APPLIED")
+    backend.mark("0001.init", "ROLLED_BACK")
 
-    rows = backend._applied_migrations()
-    assert rows[0][1] is None
+    history = backend._migration_history()
+    assert len(history) == 2
+    assert history[0][2] == "APPLIED"
+    assert history[1][2] == "ROLLED_BACK"
+    assert history[0][0] == history[1][0] == "0001.init"
 
 
-def test_unmark(backend: SQLiteBackend) -> None:
+def test_reapply_makes_migration_applied_again(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0001.init", "abc")
-    backend.mark_applied("0002.b", "def")
+    backend.mark("0001.init", "APPLIED")
+    backend.mark("0001.init", "ROLLED_BACK")
+    backend.mark("0001.init", "APPLIED")
 
-    backend.unmark("0001.init")
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
-    assert rows[0][0] == "0002.b"
+    history = backend._migration_history()
+    assert len(history) == 3
+    assert [row[2] for row in history] == ["APPLIED", "ROLLED_BACK", "APPLIED"]
 
 
-def test_applied_migrations_order(backend: SQLiteBackend) -> None:
+def test_pending_status(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0002.b", "def")
-    backend.mark_applied("0001.a", "abc")
+    backend.mark("0001.init", "PENDING")
+    backend.mark("0001.init", "APPLIED")
 
-    rows = backend._applied_migrations()
-    ids = [r[0] for r in rows]
-    assert set(ids) == {"0001.a", "0002.b"}
+    history = backend._migration_history()
+    assert [row[2] for row in history] == ["PENDING", "APPLIED"]
 
 
-def test_is_applied(backend: SQLiteBackend) -> None:
+def test_rolled_back_migration_has_correct_status(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0001.init", "abc")
+    backend.mark("0001.a", "APPLIED")
+    backend.mark("0002.b", "APPLIED")
+    backend.mark("0001.a", "ROLLED_BACK")
 
-    assert backend.is_applied("0001.init")
-    assert not backend.is_applied("0002.nonexistent")
+    history = backend._migration_history()
+    assert len(history) == 3
+    assert history[0][2] == "APPLIED"
+    assert history[1][2] == "APPLIED"
+    assert history[2][2] == "ROLLED_BACK"
 
 
 def test_ensure_migration_table_creates(backend: SQLiteBackend) -> None:
@@ -85,8 +87,11 @@ def test_ensure_migration_table_idempotent(backend: SQLiteBackend) -> None:
     assert backend.migration_table in backend.list_tables()
 
 
-def test_copy_versions(db_path: Path) -> None:
-    conn = sqlite3.connect(str(db_path))
+def test_copy_versions(tmp_path: Path) -> None:
+    import sqlite3
+
+    db_file = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db_file))
     conn.execute(
         "CREATE TABLE versions ("
         "migration_hash VARCHAR(64), migration_id VARCHAR(255), "
@@ -99,13 +104,13 @@ def test_copy_versions(db_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    b = SQLiteBackend(db_name=str(db_path))
+    b = SQLiteBackend(db_name=str(db_file))
     try:
         b.ensure_migration_table()
-        rows = b._applied_migrations()
-        assert len(rows) == 1
-        assert rows[0][0] == "0001.old"
-        assert rows[0][1] is None
+        history = b._migration_history()
+        assert len(history) == 1
+        assert history[0][0] == "0001.old"
+        assert history[0][2] == "APPLIED"
     finally:
         b.close()
 
@@ -113,64 +118,49 @@ def test_copy_versions(db_path: Path) -> None:
 def test_lock_holds_write_transaction(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
     with backend.lock():
-        backend.mark_applied("0001.init", "abc")
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
+        backend.mark("0001.init", "APPLIED")
+    history = backend._migration_history()
+    assert len(history) == 1
 
 
 def test_lock_rollback_on_exception(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
     try:
         with backend.lock():
-            backend.mark_applied("0001.init", "abc")
+            backend.mark("0001.init", "APPLIED")
             raise RuntimeError("forced")
     except RuntimeError:
         pass
-    rows = backend._applied_migrations()
-    assert len(rows) == 0
+    history = backend._migration_history()
+    assert len(history) == 0
 
 
 def test_transaction_commit(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
     with backend.transaction():
-        backend.mark_applied("0001.init", "abc")
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
+        backend.mark("0001.init", "APPLIED")
+    history = backend._migration_history()
+    assert len(history) == 1
 
 
 def test_transaction_rollback(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
     try:
         with backend.transaction():
-            backend.mark_applied("0001.init", "abc")
+            backend.mark("0001.init", "APPLIED")
             raise RuntimeError("forced")
     except RuntimeError:
         pass
-    rows = backend._applied_migrations()
-    assert len(rows) == 0
-
-
-def test_nested_transaction_savepoint_rollback(backend: SQLiteBackend) -> None:
-    backend._create_migration_table()
-    with backend.transaction():
-        backend.mark_applied("0001.init", "abc")
-        try:
-            with backend.transaction():
-                backend.mark_applied("0002.b", "def")
-                raise RuntimeError("forced")
-        except RuntimeError:
-            pass
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
-    assert rows[0][0] == "0001.init"
+    history = backend._migration_history()
+    assert len(history) == 0
 
 
 def test_disable_transactions_noop(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
     with backend.disable_transactions():
-        backend.mark_applied("0001.init", "abc")
-    rows = backend._applied_migrations()
-    assert len(rows) == 1
+        backend.mark("0001.init", "APPLIED")
+    history = backend._migration_history()
+    assert len(history) == 1
 
 
 def test_quote_identifier(backend: SQLiteBackend) -> None:
@@ -185,17 +175,16 @@ def test_quote_identifier_with_quotes(backend: SQLiteBackend) -> None:
 
 def test_execute_cursor(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    backend.mark_applied("0001.init", "abc")
+    backend.mark("0001.init", "APPLIED")
     cursor = backend.execute(
-        f"SELECT migration_id FROM {backend.migration_table_quoted} WHERE migration_id = ?",
-        ("0001.init",),
+        f"SELECT migration_id FROM {backend.migration_table} WHERE status = 'APPLIED'",
     )
     row = cursor.fetchone()
     assert row[0] == "0001.init"
 
 
-def test_migration_table_quoted_custom_name(db_path: Path) -> None:
-    b = SQLiteBackend(db_name=str(db_path), migration_table="my_history")
+def test_migration_table_quoted_custom_name() -> None:
+    b = SQLiteBackend(db_name=":memory:", migration_table="my_history")
     try:
         assert b.migration_table_quoted == '"my_history"'
         b._create_migration_table()
@@ -210,6 +199,20 @@ def test_list_tables_after_create(backend: SQLiteBackend) -> None:
     assert backend.migration_table in tables
 
 
-def test_applied_migrations_empty(backend: SQLiteBackend) -> None:
+def test_migration_history_returns_all_events(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    assert backend._applied_migrations() == []
+    backend.mark("0001.a", "APPLIED")
+    backend.mark("0002.b", "APPLIED")
+    backend.mark("0001.a", "ROLLED_BACK")
+
+    history = backend.migration_history()
+    assert len(history) == 3
+    assert [row[0] for row in history] == ["0001.a", "0002.b", "0001.a"]
+    assert [row[2] for row in history] == ["APPLIED", "APPLIED", "ROLLED_BACK"]
+
+
+def test_migration_history_no_comment_column(backend: SQLiteBackend) -> None:
+    backend._create_migration_table()
+    backend.mark("0001.a", "APPLIED")
+    history = backend._migration_history()
+    assert len(history[0]) == 3

@@ -14,18 +14,24 @@
 # limitations under the License.
 
 from classic.migrations.exceptions import (
+    BadConnectionURI,
     BadMigration,
+    InvalidArgument,
     MigrationConflict,
-    MigrationHashMismatch,
+    NoMigration,
 )
-from classic.migrations.migrations import Migrations
+from classic.migrations.migrations import MigrationsCollection
+from classic.migrations.migrator import Migrator
 
 __version__ = "2.0.0"
 
 __all__ = (
+    "BadConnectionURI",
     "BadMigration",
+    "InvalidArgument",
     "MigrationConflict",
-    "MigrationHashMismatch",
-    "Migrations",
+    "MigrationsCollection",
+    "Migrator",
+    "NoMigration",
     "__version__",
 )

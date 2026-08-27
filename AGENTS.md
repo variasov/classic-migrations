@@ -4,30 +4,23 @@
 
 ## Проект
 
-`classic-migrations` — библиотека SQL-миграций (форк yoyo-migrations). Идёт
-переписывание на новую major-версию **2.0.0**: только SQL-миграции, единый
-класс `Migrations`, одна служебная таблица истории, pre/post-хуки и сверка
-хешей применённых миграций.
-
-## Источник правды
-
-Спецификация лежит в `spec/` и является главным источником требований:
-
-- `spec/spec-2.0.0.md` — полная спецификация новой версии;
-- `spec/implementation-notes.md` — рабочие заметки: что реализовано,
-  отклонения от спецификации и принятые решения по сигнатурам.
-
-Прежде чем менять поведение, сверяйся со спецификацией. Любое расхождение
-между кодом и спекой — баг или осознанное отклонение (фиксируется в
-`implementation-notes.md`).
+`classic-migrations` — библиотека SQL-миграций (форк yoyo-migrations).
+Версия **2.0.0**: только SQL-миграции, разделение на `MigrationsCollection`
+(чтение источников) и `Migrator` (выполнение через `Backend`), append-only
+таблица истории, pre/post-хуки. Спецификация — `spec.md`, план работ —
+`tasks.md` (в конец задач дописывается статус/пометка о выполнении).
 
 ## Ограничения
 
 - **Нельзя ничего коммитить в git.** Только рабочие изменения в дереве; никаких
   `git commit`/`git push`. Не создавай коммиты даже по просьбе.
 - **Работает только backend SQLite.** Остальные СУБД (`postgresql`, `mysql`,
-  `pymssql`, `odbc`, `oracle`, `redshift`, `snowflake`) будут добавлены позже.
-  Не подключай и не полагайся на их драйверы; их SQL-запросы не проверены.
+  `psycopg`, `pymssql`, `odbc`, `oracle`, `redshift`, `snowflake`) будут
+  добавлены позже. Не подключай и не полагайся на их драйверы; их SQL-запросы
+  не проверены (в ruff для них есть исторические замечания, в pyright они
+  исключены).
+- **Нельзя ставить новые пакеты.** Если пакет нужен — спроси у пользователя.
+- **Тесты `SQLiteBackend` используют SQLite в RAM** (`db_name=":memory:"`).
 
 ## Команды
 
@@ -41,7 +34,7 @@ uv run pytest
 Отдельный тест:
 
 ```powershell
-uv run pytest tests/test_migrations.py::TestApply::test_apply_calls_backend_sequence
+uv run pytest tests/test_migrator.py
 ```
 
 Линтер — **ruff**, тайпчекер — **pyright**. Конфигурация в `pyproject.toml`
@@ -52,100 +45,108 @@ uv run ruff check sources/ tests/
 uv run pyright
 ```
 
-Тесты тоже должны проходить линтер и тайпчекинг без ошибок.
-
-Пакет ставится из `sources/` (`setup.py`, `package_dir={'': 'sources'}`),
+Пакет ставится из `sources/` (`pyproject.toml`, `package_dir={'': 'sources'}`),
 точка входа `migrations = classic.migrations.cli:main`.
 
 ## Структура
 
 ```
-spec/                                  # спецификация (см. выше)
+spec.md                                # спецификация (не менять)
+tasks.md                               # задачи рефакторинга (менять только статусы)
 sources/classic/migrations/
-    __init__.py                        # публичный API: Migrations, исключения, __version__
-    migrations.py                      # класс Migrations + чтение/парсинг SQL + сверка хешей
-    cli.py                             # argparse + main() (отдельно от Migrations)
+    __init__.py                        # публичный API: MigrationsCollection, Migrator, исключения, __version__
+    migrations.py                      # MigrationsCollection + Migration/Hook + чтение/парсинг SQL
+    migrator.py                        # Migrator: lock/history/apply/rollback, БЕЗ SQL
+    cli.py                             # argparse + main(): list/apply/rollback
     settings.py                        # Settings (pydantic-settings, .env)
-    exceptions.py                      # BadMigration, MigrationConflict, MigrationHashMismatch, BadConnectionURI
-    utils.py                           # slugify, get_random_string, unidecode
+    exceptions.py                      # BadMigration, MigrationConflict, BadConnectionURI, InvalidArgument
     backends/
-        base.py                        # DatabaseBackend: оркестрация, БЕЗ SQL-запросов
+        base.py                        # Backend: оркестрация, БЕЗ SQL-запросов
         core/sqlite3.py                # SQLiteBackend — единственный работающий бэкенд
-        core/postgresql.py             # не проверены
-        core/mysql.py                  # не проверены
+        core/psycopg.py                # не проверен
+        core/postgresql.py             # не проверен
+        core/mysql.py                  # не проверен
         contrib/*.py                   # pymssql/odbc/oracle/redshift/snowflake — не проверены
 tests/
-    conftest.py                        # фикстуры source (tmp_path) и db_path (tmp_path)
-    test_cli.py                        # тесты CLI: парсинг аргументов + cmd_* с Mock(Migrations)
-    test_migrations.py                 # тесты Migrations с Mock(DatabaseBackend)
+    conftest.py                        # фикстура source (tmp_path)
+    test_cli.py                        # тесты CLI: парсинг + cmd_* с Mock(Migrator)/Mock(MigrationsCollection)
+    test_migrations.py                 # тесты MigrationsCollection без бэкенда
+    test_migrator.py                   # тесты Migrator с FakeBackend
+    test_integration.py                # публичный API на реальной SQLite в RAM
     backends/
-        test_sqlite3.py                # тесты SQLiteBackend с реальной SQLite БД
+        fake.py                        # FakeBackend (тестовый, регистрируется как driver 'fake')
+        test_sqlite3.py                # тесты SQLiteBackend с реальной SQLite БД в RAM
 ```
 
 ## Ключевые архитектурные правила
 
-1. **Публичный API** — в `__init__.py`: `Migrations`, `BadMigration`,
-   `MigrationConflict`, `MigrationHashMismatch`, `__version__`. Больше ничего
-   публичного (`read_migrations`, `get_backend` и т.п. удалены).
+1. **Разделение слоёв.** `MigrationsCollection` не имеет доступа к БД:
+   принимает историю (лог событий) и возвращает миграции/хуки. `Migrator`
+   не содержит SQL — работает через `Backend`. CLI собирает их вместе:
+   `lock()` → `history()` → `to_apply`/`to_rollback` → `apply`/`rollback`.
 
-2. **Бэкенды — отдельные классы, по файлу на СУБД.** `Migrations` выбирает
+2. **Бэкенды — отдельные классы, по файлу на СУБД.** `Migrator` выбирает
    бэкенд по имени драйвера через реестр
-   `DatabaseBackend.implementations` (ключ — `driver.__name__` в `__init_subclass__`;
-   сейчас только `sqlite3`) и класс-метод `DatabaseBackend.get_backend_class`.
-   Базовый `DatabaseBackend` **не содержит
-   SQL** — только управление соединением/транзакциями и абстрактные методы
+   `Backend.implementations` (ключ — `driver.__name__` в `__init_subclass__`;
+   сейчас `sqlite3` и тестовый `fake`) и класс-метод
+   `Backend.get_implementation`. Базовый `Backend` **не содержит SQL** —
+   только управление соединением/транзакциями и абстрактные методы
    запросов. Каждый бэкенд пишет SQL в своём нативном `paramstyle`.
 
-3. **Одна таблица истории** `{schema}.{migration_table}`:
-   `migration_id` (PK), `content_hash`, `applied_at`, `comment`. Старая
-   таблица `versions` при первом запуске переносится (`_copy_versions`) и не
-   удаляется; `history`/`lock` игнорируются.
+3. **Одна таблица истории** `{migration_table}` — append-only лог событий:
+   `id` (PK), `migration_id`, `applied_at`, `comment`, `status`
+   (`applied` | `rolled_back`). Каждое apply/rollback дописывает событие;
+   актуальный статус миграции — её последнее событие. Старая таблица
+   `versions` при первом запуске переносится (`_copy_versions`) как события
+   `applied` и не удаляется. Сверка хешей не выполняется (удалена в 2.0.0).
 
-4. **Сверка хешей.** `content_hash` = sha256 тела миграции после парсинга
-   (без блока директив `-- depends:/-- transactional:/-- comment:`). При
-   `apply`/`develop`/`reapply` сверяются все миграции источника, уже
-   присутствующие в истории; `NULL` в `content_hash` = сверка отключена.
-
-5. **Хуки** — зарезервированные имена `pre-apply.sql`, `post-apply.sql`,
+4. **Хуки** — зарезервированные имена `pre-apply.sql`, `post-apply.sql`,
    `pre-rollback.sql`, `post-rollback.sql` в каталоге миграций. Не являются
-   миграциями, не попадают в историю, не участвуют в сверке.
+   миграциями, не попадают в историю. Читаются `MigrationsCollection`,
+   выполняются `Migrator` (`pre-apply`/`post-apply` в `apply`,
+   `pre-rollback`/`post-rollback` в `rollback`).
 
-6. **Batch-режим всегда.** Интерактивные вопросы, `BATCH_MODE`, `--batch`,
-   `break-lock` удалены. Блокировка — нативная, сессионная (SQLite: удержание
-   write-транзакции `BEGIN IMMEDIATE` в `SQLiteBackend.lock`).
+5. **FakeBackend** (`tests/backends/fake.py`) — тестовый инструмент для
+   `Migrator`: хранит лог событий в памяти, предоставляет `applied_list`,
+   `events` и другие методы проверки состояния. Регистрируется через
+   `driver=_FakeDriver` (имя `fake`), в тестах `Migrator(driver='fake')`
+   выбирает его без патчинга реестра.
 
 ## Конвенции кода
 
 - Python ≥ 3.10, современный синтаксис (`str | None`, аннотации типов).
-- Существующий код частично унаследован от yoyo-migrations: попадаются
-  `str.format(...)` вместо f-строк и строковые докстрины. Новый код пиши в том
-  же стиле, что и окружающий, но f-строки допустимы.
-- Комментарии в коде — только где действительно нужны (не добавляй лишних).
 - Миграционные SQL-файлы в тестах создаются вспомогательной функцией
-  `write_file` (в `tests/test_migrations.py`).
+  `write_file` (в `tests/test_migrations.py` и других тест-файлах).
 
 ## Структура тестов
 
 Тесты разделены по слоям:
 
 - **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы `cmd_*`.
-  `Migrations` подменяется `Mock`, проверяется что вызываются правильные
-  методы с правильными параметрами (`assert_called_once_with(...)`).
-  Настоящие миграции и БД не используются.
+  `Migrator` и `MigrationsCollection` подменяются `Mock`, проверяется что
+  вызываются правильные методы с правильными параметрами
+  (`assert_called_once_with(...)`). Настоящие миграции и БД не используются.
 
-- **`tests/test_migrations.py`** — тесты класса `Migrations`.
-  `DatabaseBackend.get_backend_class` патчится, возвращая `Mock`-бэкенд.
-  Проверяется последовательность вызовов (`lock` → `ensure_migration_table` →
-  `mark_applied`/`unmark` → `close`), фильтрация (`match`, `revision`, `all`,
-  `one`), сверка хешей, разрешение зависимостей.
+- **`tests/test_migrations.py`** — чистые тесты `MigrationsCollection`
+  без бэкенда: `list()`, `to_apply`/`to_rollback` (target включительно,
+  топологическая сортировка, разрешение зависимостей, циклы, дубликаты id),
+  чтение хуков, парсинг директив.
+
+- **`tests/test_migrator.py`** — тесты `Migrator` с `FakeBackend`
+  (`tests/backends/fake.py`, `Migrator(driver='fake')`): последовательность
+  (хуки → statements → события истории → хуки), fake-режим, передача lock,
+  история, жизненный цикл.
+
+- **`tests/test_integration.py`** — сценарий публичного API из spec.md на
+  реальной SQLite в RAM.
 
 - **`tests/backends/test_sqlite3.py`** — тесты `SQLiteBackend` с реальной
-  SQLite БД (через `tmp_path`). Проверяется создание таблицы, `mark_applied` /
-  `unmark` / `is_applied`, порядок выборки, `_copy_versions`, лок и
+  SQLite БД в RAM (`:memory:`). Проверяется append-only события вместо
+  удаления, вычисление текущего статуса, порядок, `_copy_versions`, лок и
   транзакции. Для каждого будущего бэкенда должен быть аналогичный файл
   в `tests/backends/`.
 
-Фикстуры `source` и `db_path` — в `tests/conftest.py`.
+Фикстура `source` — в `tests/conftest.py`.
 
 ## Проверка изменений
 
@@ -157,5 +158,7 @@ uv run pyright
 uv run pytest
 ```
 
-Все тесты должны проходить, ruff и pyright — без ошибок. Новую
-функциональность покрывай тестами в соответствующем слое по образцу существующих.
+Все тесты должны проходить, ruff и pyright — без ошибок (исторические
+замечания ruff в непроверяемых бэкендах `contrib/`, `core/mysql.py`,
+`core/postgresql.py` — исключение). Новую функциональность покрывай тестами
+в соответствующем слое по образцу существующих.
