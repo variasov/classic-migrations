@@ -60,6 +60,8 @@ class Backend:
 
     transactional_ddl: ClassVar[bool] = False
 
+    supports_schemas: ClassVar[bool] = False
+
     def __init_subclass__(cls, driver: Any = None, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if driver is not None:
@@ -82,6 +84,9 @@ class Backend:
         db_password: str | None = None,
         db_args: dict[str, Any] | None = None,
         migration_table: str = "migrations",
+        migration_schema: str | None = None,
+        versions_table: str = "versions",
+        versions_schema: str | None = None,
     ) -> None:
         self.db_host = db_host
         self.db_port = db_port
@@ -90,11 +95,14 @@ class Backend:
         self.db_password = db_password
         self.db_args = db_args or {}
         self.migration_table = migration_table
+        self.migration_schema = migration_schema
+        self.versions_table = versions_table
+        self.versions_schema = versions_schema
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect()
         self.init_connection(self._connection)
-        self.migration_table_quoted = self.quote_identifier(self.migration_table)
-        self.versions_table_quoted = self.quote_identifier(self.versions_table)
+        self.migration_table_quoted = self.quote_table(self.migration_table)
+        self.versions_table_quoted = self.quote_versions_table()
         self._in_transaction = False
 
     # ------------------------------------------------------------------
@@ -157,6 +165,22 @@ class Backend:
         assert "\x00" not in s
         quoted = s.replace('"', '""')
         return f'"{quoted}"'
+
+    def quote_table(self, name: str) -> str:
+        if self.supports_schemas and self.migration_schema:
+            return (
+                f"{self.quote_identifier(self.migration_schema)}."
+                f"{self.quote_identifier(name)}"
+            )
+        return self.quote_identifier(name)
+
+    def quote_versions_table(self) -> str:
+        if self.supports_schemas and self.versions_schema:
+            return (
+                f"{self.quote_identifier(self.versions_schema)}."
+                f"{self.quote_identifier(self.versions_table)}"
+            )
+        return self.quote_identifier(self.versions_table)
 
     def transaction(self) -> TransactionManager:
         return TransactionManager(self)

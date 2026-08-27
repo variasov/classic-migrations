@@ -50,9 +50,13 @@ class Settings:
         return self._environ.get("DATABASE_DRIVER", "")
 
     @property
-    def DATABASE_USER_(self) -> str | None:
+    def DATABASE_USER(self) -> str | None:
         value = self._environ.get("DATABASE_USER")
-        return value if value else None
+        if not value:
+            return None
+        if self.DATABASE_USER_DOMAIN:
+            return f"{self.DATABASE_USER_DOMAIN}\\{value}"
+        return value
 
     @property
     def DATABASE_USER_DOMAIN(self) -> str | None:
@@ -86,10 +90,14 @@ class Settings:
         return self._environ.get("MIGRATIONS_TABLE", "migrations")
 
     @property
-    def DATABASE_USER(self) -> str | None:
-        if self.DATABASE_USER_DOMAIN:
-            return f"{self.DATABASE_USER_DOMAIN}\\{self.DATABASE_USER_ or ''}"
-        return self.DATABASE_USER_
+    def MIGRATIONS_SCHEMA(self) -> str | None:
+        value = self._environ.get("MIGRATIONS_SCHEMA")
+        return value if value else None
+
+    @property
+    def OLD_VERSIONS_SCHEMA(self) -> str | None:
+        value = self._environ.get("OLD_VERSIONS_SCHEMA")
+        return value if value else None
 
     @property
     def sources_list(self) -> list[str]:

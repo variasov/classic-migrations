@@ -2,7 +2,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from classic.migrations.backends.core.sqlite3 import SQLiteBackend
+from classic.migrations.backends.sqlite3 import SQLiteBackend
 
 
 @pytest.fixture
@@ -214,3 +214,14 @@ def test_migration_history_no_comment_column(backend: SQLiteBackend) -> None:
     backend.mark("0001.a", "APPLIED")
     history = backend._migration_history()
     assert len(history[0]) == 3
+
+
+def test_migration_schema_ignored() -> None:
+    b = SQLiteBackend(db_name=":memory:", migration_schema="foo")
+    try:
+        assert b.migration_table_quoted == '"migrations"'
+        b.ensure_migration_table()
+        assert "migrations" in b.list_tables()
+        assert "foo" not in b.list_tables()
+    finally:
+        b.close()

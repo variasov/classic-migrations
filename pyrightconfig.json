@@ -5,8 +5,7 @@
     "**/.pytest_cache",
     ".venv",
     "sources/classic/migrations/backends/contrib",
-    "sources/classic/migrations/backends/core/mysql.py",
-    "sources/classic/migrations/backends/core/postgresql.py"
+    "sources/classic/migrations/backends/core/mysql.py"
   ],
   "typeCheckingMode": "strict",
   "reportMissingTypeStubs": "none",

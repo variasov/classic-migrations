@@ -31,11 +31,8 @@
 uv run pytest
 ```
 
-Отдельный тест:
-
-```powershell
-uv run pytest tests/test_migrator.py
-```
+Покрытие — плагин **pytest-cov** (dev-группа), настройки в `pyproject.toml`
+(`[tool.pytest.ini_options]`, `[tool.coverage.*]`).
 
 Линтер — **ruff**, тайпчекер — **pyright**. Конфигурация в `pyproject.toml`
 (ruff) и `pyrightconfig.json`. Запуск:
@@ -62,9 +59,8 @@ sources/classic/migrations/
     exceptions.py                      # BadMigration, MigrationConflict, BadConnectionURI, InvalidArgument
     backends/
         base.py                        # Backend: оркестрация, БЕЗ SQL-запросов
-        core/sqlite3.py                # SQLiteBackend — единственный работающий бэкенд
-        core/psycopg.py                # не проверен
-        core/postgresql.py             # не проверен
+        sqlite3.py                     # SQLiteBackend — единственный работающий бэкенд
+        psycopg.py                     # PsycopgBackend — не проверен
         core/mysql.py                  # не проверен
         contrib/*.py                   # pymssql/odbc/oracle/redshift/snowflake — не проверены
 tests/
@@ -76,6 +72,7 @@ tests/
     backends/
         fake.py                        # FakeBackend (тестовый, регистрируется как driver 'fake')
         test_sqlite3.py                # тесты SQLiteBackend с реальной SQLite БД в RAM
+        test_psycopg.py                # тесты PsycopgBackend на реальном PostgreSQL (креды из DB_*)
 ```
 
 ## Ключевые архитектурные правила
@@ -159,6 +156,6 @@ uv run pytest
 ```
 
 Все тесты должны проходить, ruff и pyright — без ошибок (исторические
-замечания ruff в непроверяемых бэкендах `contrib/`, `core/mysql.py`,
-`core/postgresql.py` — исключение). Новую функциональность покрывай тестами
+замечания ruff в непроверяемых бэкендах `contrib/`, `core/mysql.py` —
+исключение). Новую функциональность покрывай тестами
 в соответствующем слое по образцу существующих.

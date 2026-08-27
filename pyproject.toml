@@ -48,8 +48,19 @@ migrations = "classic.migrations.cli:main"
 dev = [
     "pyright[nodejs]>=1.1.411",
     "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
     "ruff>=0.16.4",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--cov=classic --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["classic"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "SLF"]

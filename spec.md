@@ -24,6 +24,8 @@ Hook всегда применяется вне транзакции.
 - migration_id: название миграции
 - status: строка со значением 'PENDING', 'APPLIED' и 'ROLLED_BACK'.
 
+Также должна быть возможность задать схему, в которой должна размещаться таблица с историей. Если БД не поддерживает схемы, то этот параметр должен игнорироваться в соотетствующем бекенде.
+
 ## MigrationsCollection
 Класс Migrations теперь должен называться MigrationsCollection. Конструктор принимает только путь к каталогу миграций (или список путей); коллекция не имеет доступа к БД.
 Его публичные методы:
@@ -63,6 +65,7 @@ FakeBackend может содержать состояние с якобы пр�
 
 ## Settings
 Класс, отвечающий за считывание, парсинг и проверку переменных окружения:
+```
 SOURCES: str
 DATABASE_DRIVER: str
 DATABASE_USER: str | None = None
@@ -72,6 +75,8 @@ DATABASE_HOST: str | None = None
 DATABASE_PORT: int | None = None
 DATABASE_NAME: str | None = None
 MIGRATIONS_TABLE: str = "migrations"
+MIGRATIONS_SCHEMA: str | None = None  ## Схема для размещения таблицы с историей
+```
 
 ## Public API
 Библиотека должна давать примерно такой публичный API (например, для запуска миграций при тестировании проектов):

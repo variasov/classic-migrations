@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from classic.migrations.backends.core.postgresql import PostgresqlBackend
+from classic.migrations.backends.psycopg import PsycopgBackend
 
 
-class RedshiftBackend(PostgresqlBackend):
+class RedshiftBackend(PsycopgBackend):
     def savepoint(self, id):
         pass
 

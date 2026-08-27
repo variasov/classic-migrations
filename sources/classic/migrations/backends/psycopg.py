@@ -24,6 +24,9 @@ from classic.migrations.backends.base import Backend
 
 class PsycopgBackend(Backend, driver=psycopg):
 
+    transactional_ddl = True
+    supports_schemas = True
+
     def connect(self) -> psycopg.Connection:
         kwargs: dict[str, Any] = {}
         if self.db_host is not None:
@@ -42,11 +45,25 @@ class PsycopgBackend(Backend, driver=psycopg):
         return conn
 
     def list_tables(self) -> list[str]:
-        cursor = self.execute(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_schema = current_schema()"
-        )
+        if self.migration_schema:
+            cursor = self.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = %s",
+                (self.migration_schema,),
+            )
+        else:
+            cursor = self.execute(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema()"
+            )
         return [row[0] for row in cursor.fetchall()]
+
+    def ensure_migration_table(self) -> None:
+        if self.migration_schema:
+            self.execute(
+                f"CREATE SCHEMA IF NOT EXISTS {self.quote_identifier(self.migration_schema)}"
+            )
+        super().ensure_migration_table()
 
     def _create_migration_table(self) -> None:
         self.execute(

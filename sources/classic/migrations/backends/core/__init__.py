@@ -1,7 +1,7 @@
-from classic.migrations.backends.core.sqlite3 import SQLiteBackend
+from classic.migrations.backends.sqlite3 import SQLiteBackend
 
 try:
-    from classic.migrations.backends.core.psycopg import (
+    from classic.migrations.backends.psycopg import (
         PsycopgBackend as _PsycopgBackend,
     )
 except ImportError:

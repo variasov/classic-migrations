@@ -117,6 +117,8 @@ def _make_migrator(args: argparse.Namespace) -> Migrator:
         db_user=settings.DATABASE_USER,
         db_pass=settings.DATABASE_PASSWORD,
         migration_table=settings.MIGRATIONS_TABLE,
+        migration_schema=settings.MIGRATIONS_SCHEMA,
+        versions_schema=settings.OLD_VERSIONS_SCHEMA,
     )
 
 

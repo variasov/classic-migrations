@@ -41,6 +41,8 @@ class Migrator:
         db_user: str | None = None,
         db_pass: str | None = None,
         migration_table: str = "migrations",
+        migration_schema: str | None = None,
+        versions_schema: str | None = None,
     ) -> None:
         if not driver:
             raise ValueError("driver must not be empty")
@@ -51,6 +53,8 @@ class Migrator:
         self._db_user = db_user
         self._db_pass = db_pass
         self._migration_table = migration_table
+        self._migration_schema = migration_schema
+        self._versions_schema = versions_schema
         self._backend: Backend | None = None
 
     def close(self) -> None:
@@ -76,6 +80,8 @@ class Migrator:
             db_user=self._db_user,
             db_password=self._db_pass,
             migration_table=self._migration_table,
+            migration_schema=self._migration_schema,
+            versions_schema=self._versions_schema,
         )
         self._backend.acquire_lock()
         return self
