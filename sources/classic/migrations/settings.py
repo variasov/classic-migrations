@@ -95,8 +95,8 @@ class Settings:
         return value if value else None
 
     @property
-    def OLD_VERSIONS_SCHEMA(self) -> str | None:
-        value = self._environ.get("OLD_VERSIONS_SCHEMA")
+    def OLD_MIGRATIONS_SCHEMA(self) -> str | None:
+        value = self._environ.get("OLD_MIGRATIONS_SCHEMA")
         return value if value else None
 
     @property

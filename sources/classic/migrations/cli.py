@@ -102,12 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _make_collection(args: argparse.Namespace) -> MigrationsCollection:
+def _make_collection() -> MigrationsCollection:
     settings = Settings()
     return MigrationsCollection(sources=settings.sources_list)
 
 
-def _make_migrator(args: argparse.Namespace) -> Migrator:
+def _make_migrator() -> Migrator:
     settings = Settings()
     return Migrator(
         driver=settings.DATABASE_DRIVER,
@@ -118,7 +118,7 @@ def _make_migrator(args: argparse.Namespace) -> Migrator:
         db_pass=settings.DATABASE_PASSWORD,
         migration_table=settings.MIGRATIONS_TABLE,
         migration_schema=settings.MIGRATIONS_SCHEMA,
-        versions_schema=settings.OLD_VERSIONS_SCHEMA,
+        versions_schema=settings.OLD_MIGRATIONS_SCHEMA,
     )
 
 
@@ -135,8 +135,8 @@ def _print_migrations(migrations: list[Any]) -> None:
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
-    collection = _make_collection(args)
-    migrator = _make_migrator(args)
+    collection = _make_collection()
+    migrator = _make_migrator()
     with migrator:
         history = migrator.history()
         hooks, migrations = collection.to_apply(history, target=args.migration_name)
@@ -148,8 +148,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    collection = _make_collection(args)
-    migrator = _make_migrator(args)
+    collection = _make_collection()
+    migrator = _make_migrator()
     with migrator:
         history = migrator.history()
 
@@ -176,8 +176,8 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
-    collection = _make_collection(args)
-    migrator = _make_migrator(args)
+    collection = _make_collection()
+    migrator = _make_migrator()
     with migrator:
         history = migrator.history()
         hooks, migrations = collection.to_rollback(history, target=args.migration_name)
