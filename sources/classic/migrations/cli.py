@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Command-line interface for the migrations tool."""
+
 import argparse
 import csv
 import logging
@@ -36,6 +38,7 @@ max_verbosity = max(verbosity_levels)
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return the argument parser for the CLI."""
     parser = argparse.ArgumentParser(prog="migrations")
 
     common = argparse.ArgumentParser(add_help=False)
@@ -131,10 +134,11 @@ def _write_csv(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
 def _print_migrations(migrations: list[Any]) -> None:
     ids = [m.id for m in migrations]
     sources = [getattr(m, "source_dir", "") or "" for m in migrations]
-    _write_csv(("ID", "SOURCE"), list(zip(ids, sources)))
+    _write_csv(("ID", "SOURCE"), list(zip(ids, sources, strict=False)))
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
+    """Apply pending migrations up to and including ``args.migration_name``."""
     collection = _make_collection()
     migrator = _make_migrator()
     with migrator:
@@ -148,6 +152,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
+    """List migrations and their applied/unapplied status."""
     collection = _make_collection()
     migrator = _make_migrator()
     with migrator:
@@ -164,18 +169,22 @@ def cmd_list(args: argparse.Namespace) -> int:
             for m in migrations
         ]
 
-    status, ids, sources = zip(*rows) if rows else ((), (), ())
+    status, ids, sources = zip(*rows, strict=False) if rows else ((), (), ())
 
     if sys.stdout.isatty():
         status = [
             f"\033[92m{s}\033[0m" if s == "A" else f"\033[91m{s}\033[0m" for s in status
         ]
 
-    _write_csv(("STATUS", "ID", "SOURCE"), list(zip(status, ids, sources)))
+    _write_csv(
+        ("STATUS", "ID", "SOURCE"),
+        list(zip(status, ids, sources, strict=False)),
+    )
     return 0
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
+    """Rollback applied migrations down to and including ``args.migration_name``."""
     collection = _make_collection()
     migrator = _make_migrator()
     with migrator:
@@ -189,6 +198,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse ``argv`` and dispatch to the requested subcommand."""
     parser = build_parser()
     args = parser.parse_args(argv)
 

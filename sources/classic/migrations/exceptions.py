@@ -13,36 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Exception types used throughout the library."""
+
 
 class InvalidArgument(Exception):
-    """Invalid CLI argument"""
+    """Invalid CLI argument."""
 
 
 class BadConnectionURI(Exception):
-    """
-    An invalid connection URI
-    """
+    """An invalid connection URI."""
 
 
 class BadMigration(Exception):
-    """
-    The migration file could not be compiled
-    """
+    """The migration file could not be compiled."""
 
 
 class MigrationConflict(Exception):
-    """
-    The migration id conflicts with another migration
-    """
+    """The migration id conflicts with another migration."""
 
 
 class NoMigration(Exception):
-    """
-    The migration name could not be resolved
-    """
+    """The migration name could not be resolved."""
 
 
 class MigrationLockError(Exception):
-    """
-    Could not acquire an advisory lock on the database
-    """
+    """Could not acquire an advisory lock on the database."""

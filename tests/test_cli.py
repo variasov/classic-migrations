@@ -10,6 +10,7 @@ from classic.migrations.cli import (
     cmd_rollback,
     main,
 )
+from classic.migrations.migrations import Migration
 
 
 @pytest.fixture
@@ -103,7 +104,7 @@ class TestParser:
 
 class TestCmdApply:
     def test_calls_to_apply_and_apply(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         _run_cmd(cmd_apply, args, mock_migrator, mock_collection)
@@ -116,7 +117,7 @@ class TestCmdApply:
         )
 
     def test_passes_target_fake(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         _run_cmd(cmd_apply, args, mock_migrator, mock_collection)
@@ -141,7 +142,7 @@ class TestCmdApply:
 
 class TestCmdRollback:
     def test_calls_to_rollback_and_rollback(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         _run_cmd(cmd_rollback, args, mock_migrator, mock_collection)
@@ -154,7 +155,7 @@ class TestCmdRollback:
         )
 
     def test_passes_target_fake(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock
+        self, mock_migrator: MagicMock, mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         _run_cmd(cmd_rollback, args, mock_migrator, mock_collection)
@@ -192,8 +193,6 @@ class TestCmdList:
         self, mock_migrator: MagicMock, mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from classic.migrations.migrations import Migration
-
         def make_migration(migration_id: str) -> Migration:
             return Migration(migration_id, f"/fake/{migration_id}.sql")
 
@@ -213,11 +212,8 @@ class TestCmdList:
         self, mock_migrator: MagicMock, mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        from classic.migrations.migrations import Migration
-
         def make_migration(migration_id: str) -> Migration:
-            m = Migration(migration_id, f"/fake/{migration_id}.sql")
-            return m
+            return Migration(migration_id, f"/fake/{migration_id}.sql")
 
         mock_migrator.history.return_value = [
             ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
@@ -235,7 +231,10 @@ class TestCmdList:
 
 
 class TestMain:
-    def test_main_no_command_returns_1(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_main_no_command_returns_1(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
         with (
             patch("classic.migrations.cli._make_migrator"),
             patch("classic.migrations.cli._make_collection"),
@@ -250,8 +249,14 @@ class TestMain:
         mock_collection = MagicMock()
         mock_collection.to_apply.return_value = ({}, [])
         with (
-            patch("classic.migrations.cli._make_migrator", return_value=mock_migrator),
-            patch("classic.migrations.cli._make_collection", return_value=mock_collection),
+            patch(
+                "classic.migrations.cli._make_migrator",
+                return_value=mock_migrator,
+            ),
+            patch(
+                "classic.migrations.cli._make_collection",
+                return_value=mock_collection,
+            ),
             patch("classic.migrations.cli.Settings"),
         ):
             result = main(["apply"])
@@ -263,8 +268,14 @@ class TestMain:
         mock_collection = MagicMock()
         mock_collection.list.return_value = []
         with (
-            patch("classic.migrations.cli._make_migrator", return_value=mock_migrator),
-            patch("classic.migrations.cli._make_collection", return_value=mock_collection),
+            patch(
+                "classic.migrations.cli._make_migrator",
+                return_value=mock_migrator,
+            ),
+            patch(
+                "classic.migrations.cli._make_collection",
+                return_value=mock_collection,
+            ),
             patch("classic.migrations.cli.Settings"),
         ):
             result = main(["list"])

@@ -4,7 +4,6 @@ from pathlib import Path
 
 import psycopg
 import pytest
-
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.psycopg import PsycopgBackend
 
@@ -144,7 +143,7 @@ def test_copy_versions(backend: PsycopgBackend) -> None:
     backend.execute(
         f"CREATE TABLE {backend.versions_table_quoted} ("
         "migration_hash VARCHAR(64), migration_id VARCHAR(255), "
-        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))"
+        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))",
     )
     backend.execute(
         f"INSERT INTO {backend.versions_table_quoted} "
@@ -179,10 +178,9 @@ def test_transaction_commit(backend: PsycopgBackend) -> None:
 
 def test_transaction_rollback(backend: PsycopgBackend) -> None:
     backend._create_migration_table()
-    with pytest.raises(RuntimeError):
-        with backend.transaction():
-            backend.mark("0001.init", "APPLIED")
-            raise RuntimeError("forced")
+    with pytest.raises(RuntimeError, match="forced"), backend.transaction():
+        backend.mark("0001.init", "APPLIED")
+        raise RuntimeError("forced")
     history = backend._migration_history()
     assert len(history) == 0
 
@@ -208,7 +206,7 @@ def test_execute_cursor(backend: PsycopgBackend) -> None:
     backend.mark("0001.init", "APPLIED")
     cursor = backend.execute(
         f"SELECT migration_id FROM {backend.migration_table_quoted} "
-        "WHERE status = 'APPLIED'"
+        "WHERE status = 'APPLIED'",
     )
     row = cursor.fetchone()
     assert row[0] == "0001.init"
@@ -280,8 +278,7 @@ class TestPsycopgLifecycle:
 
     def test_apply_and_rollback(self, source: Path) -> None:
         def write_file(path: Path, content: str) -> Path:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
+            path.write_text(content, encoding="utf-8")
             return path
 
         write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")

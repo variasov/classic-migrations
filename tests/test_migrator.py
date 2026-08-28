@@ -1,21 +1,20 @@
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import pytest
+from classic.migrations.migrations import Hook, Migration
 from classic.migrations.migrator import Migrator
 
 from tests.backends.fake import FakeBackend
 
 
 def write_file(path: Path, content: str) -> Path:
-    path_ = str(path)
-    with open(path_, "w", encoding="utf-8") as f:
-        f.write(content)
+    path.write_text(content, encoding="utf-8")
     return path
 
 
 def _fake_backend(migrator: Migrator) -> FakeBackend:
-    return cast(FakeBackend, migrator.backend)
+    return cast("FakeBackend", migrator.backend)
 
 
 def _make_migration(
@@ -24,9 +23,7 @@ def _make_migration(
     transactional: bool | None = None,
     rollback_statements: list[str] | None = None,
     rollback_transactional: bool | None = None,
-) -> Any:
-    from classic.migrations.migrations import Migration
-
+) -> Migration:
     m = Migration(migration_id, f"/fake/{migration_id}.sql")
     m.apply_statements = statements or [f"-- apply {migration_id}"]
     m.rollback_statements = rollback_statements or [f"-- rollback {migration_id}"]
@@ -134,11 +131,10 @@ class TestApply:
         assert events[1][0] == "0001.a"
 
     def test_apply_runs_pre_and_post_hooks(
-        self, source: Path
+        self, source: Path,
     ) -> None:
         write_file(source / "pre-apply.sql", "SELECT pre;\n")
         write_file(source / "post-apply.sql", "SELECT post;\n")
-        from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
 
@@ -158,14 +154,19 @@ class TestApply:
         assert len(cursor_ops) == 3
 
     def test_apply_fake_skips_sql_and_hooks(
-        self, source: Path
+        self, source: Path,
     ) -> None:
-        from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
 
-        pre = Hook("pre-apply", str(write_file(source / "pre-apply.sql", "SELECT pre;\n")))
-        post = Hook("post-apply", str(write_file(source / "post-apply.sql", "SELECT post;\n")))
+        pre = Hook(
+            "pre-apply",
+            str(write_file(source / "pre-apply.sql", "SELECT pre;\n")),
+        )
+        post = Hook(
+            "post-apply",
+            str(write_file(source / "post-apply.sql", "SELECT post;\n")),
+        )
         m1 = _make_migration("0001.a")
 
         with migrator:
@@ -250,14 +251,19 @@ class TestRollback:
         assert events[1][0] == "0001.a"
 
     def test_rollback_runs_pre_and_post_hooks(
-        self, source: Path
+        self, source: Path,
     ) -> None:
-        from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
 
-        pre = Hook("pre-rollback", str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")))
-        post = Hook("post-rollback", str(write_file(source / "post-rollback.sql", "SELECT post;\n")))
+        pre = Hook(
+            "pre-rollback",
+            str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")),
+        )
+        post = Hook(
+            "post-rollback",
+            str(write_file(source / "post-rollback.sql", "SELECT post;\n")),
+        )
         m1 = _make_migration("0001.a", transactional=True)
 
         with migrator:
@@ -272,14 +278,19 @@ class TestRollback:
         assert len(cursor_ops) == 3
 
     def test_rollback_fake_skips_sql_and_hooks(
-        self, source: Path
+        self, source: Path,
     ) -> None:
-        from classic.migrations.migrations import Hook
 
         migrator = Migrator(driver="fake")
 
-        pre = Hook("pre-rollback", str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")))
-        post = Hook("post-rollback", str(write_file(source / "post-rollback.sql", "SELECT post;\n")))
+        pre = Hook(
+            "pre-rollback",
+            str(write_file(source / "pre-rollback.sql", "SELECT pre;\n")),
+        )
+        post = Hook(
+            "post-rollback",
+            str(write_file(source / "post-rollback.sql", "SELECT post;\n")),
+        )
         m1 = _make_migration("0001.a")
 
         with migrator:

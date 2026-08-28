@@ -13,13 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+"""Classes for reading migration files and computing apply/rollback plans."""
+
 import re
 from collections import OrderedDict
 from collections.abc import Iterable
 from glob import glob
 from graphlib import CycleError, TopologicalSorter
 from logging import getLogger
+from pathlib import Path
 
 import sqlparse
 from classic.migrations import exceptions
@@ -31,19 +33,18 @@ HOOK_NAMES = ("pre-apply", "post-apply", "pre-rollback", "post-rollback")
 DirectivesType = dict[str, str]
 
 
-def _is_migration_file(path: str) -> bool:
-    _, extension = os.path.splitext(path)
-    return extension == ".sql"
-
-
 def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
+    """Extract migration directives from the leading comment block of ``s``."""
     directive_names = ["transactional", "depends"]
     comment_or_empty = re.compile(r"^(\s*|\s*--.*)$").match
     directive_pattern = re.compile(
-        r"^\s*--\s*({})\s*:\s*(.*)$".format("|".join(map(re.escape, directive_names)))
+        r"^\s*--\s*({})\s*:\s*(.*)$".format(
+            "|".join(map(re.escape, directive_names)),
+        ),
     )
 
-    lineending = re.search(r"\n|\r\n|\r", s + "\n").group(0)  # type: ignore
+    match = re.search(r"\n|\r\n|\r", s + "\n")
+    lineending = "\n" if match is None else match.group(0)
     lines = iter(s.split(lineending))
     directives: DirectivesType = {}
     sql: list[str] = []
@@ -65,10 +66,12 @@ def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
 
 
 def read_sql(path: str) -> tuple[DirectivesType, list[str]]:
+    """Read ``path``, returning its directives and SQL statements."""
     directives: DirectivesType = {}
-    statements = []
-    if os.path.exists(path):
-        with open(path, "r", encoding="UTF-8") as f:
+    statements: list[str] = []
+    sql_path = Path(path)
+    if sql_path.exists():
+        with sql_path.open(encoding="UTF-8") as f:
             statements = sqlparse.split(f.read())
             if statements:
                 directives, sql = parse_metadata_from_sql_comments(statements[0])
@@ -78,8 +81,10 @@ def read_sql(path: str) -> tuple[DirectivesType, list[str]]:
 
 
 class Migration:
+    """A single migration file with its directives and SQL statements."""
 
     def __init__(self, id: str, path: str, source_dir: str | None = None) -> None:
+        """Initialize a migration with its id and SQL file path."""
         self.id = id
         self.path = path
         self.source_dir = source_dir
@@ -91,24 +96,29 @@ class Migration:
         self._loaded = False
 
     def __repr__(self) -> str:
+        """Return a developer-friendly representation."""
         return f"<{self.__class__.__name__} {self.id!r} from {self.path}>"
 
     def load(self) -> None:
+        """Load the SQL and directives for this migration (idempotent)."""
         if self._loaded:
             return
 
         directives, statements = read_sql(self.path)
-        rb_directives, rollback_statements = read_sql(self._rollback_path())
+        rb_directives, rollback_statements = read_sql(self.rollback_path())
 
-        self.depends = {d.strip() for d in directives.get("depends", "").split(",") if d.strip()}
+        self.depends = {
+            d.strip() for d in directives.get("depends", "").split(",") if d.strip()
+        }
         transactional_raw = directives.get("transactional")
         if transactional_raw is None:
             self.transactional = None
-        elif transactional_raw.lower() in {"true", "false"}:
+        elif transactional_raw.lower() in ("true", "false"):
             self.transactional = transactional_raw.lower() == "true"
         else:
             raise exceptions.BadMigration(
-                f"Invalid transactional directive {transactional_raw!r} in {self.path}"
+                f"Invalid transactional directive {transactional_raw!r} "
+                f"in {self.path}",
             )
 
         self._load_rollback_directives(rb_directives)
@@ -121,7 +131,7 @@ class Migration:
         for k in rb_directives:
             if k != "transactional":
                 raise exceptions.BadMigration(
-                    f"Invalid directive {k!r} in rollback file {self._rollback_path()}"
+                    f"Invalid directive {k!r} in rollback file {self.rollback_path()}",
                 )
         transactional_raw = rb_directives.get("transactional")
         if transactional_raw is None:
@@ -130,23 +140,28 @@ class Migration:
             self.rollback_transactional = transactional_raw.lower() == "true"
         else:
             raise exceptions.BadMigration(
-                f"Invalid transactional directive {transactional_raw!r} in rollback file {self._rollback_path()}"
+                f"Invalid transactional directive {transactional_raw!r} "
+                f"in rollback file {self.rollback_path()}",
             )
 
-    def _rollback_path(self) -> str:
-        base, ext = os.path.splitext(self.path)
-        return base + ".rollback" + ext
+    def rollback_path(self) -> str:
+        """Return the path of the rollback file paired with this migration."""
+        path = Path(self.path)
+        return str(path.with_name(path.name.replace(".sql", ".rollback.sql")))
 
 
 class Hook:
+    """A hook SQL file executed before or after apply/rollback."""
 
     def __init__(self, name: str, path: str) -> None:
+        """Initialize a hook with its name and SQL file path."""
         self.name = name
         self.path = path
         self.statements: list[str] = []
         self._loaded = False
 
     def load(self) -> None:
+        """Load this hook's SQL statements (idempotent)."""
         if self._loaded:
             return
         _directives, statements = read_sql(self.path)
@@ -157,39 +172,43 @@ class Hook:
 class MigrationsCollection:
     """Collection of migrations read from one or more source directories."""
 
-    def __init__(self, sources: str | list[str]):
+    def __init__(self, sources: str | list[str]) -> None:
+        """Initialize a collection for the given source directories."""
         if not sources:
             raise ValueError("sources must not be empty")
         self.sources = sources
         self._migrations: list[Migration] | None = None
         self._hooks: dict[str, list[Hook]] | None = None
 
-    def _sources(self) -> list[str]:
+    def _source_list(self) -> list[str]:
         if isinstance(self.sources, str):
             return [self.sources]
         return list(self.sources)
 
     def _expand_sources(self) -> Iterable[str]:
-        for source in self._sources():
-            for directory in glob(source):
-                if os.path.isdir(directory):
+        for source in self._source_list():
+            for directory in glob(source):  # noqa: PTH207
+                if Path(directory).is_dir():
                     yield directory
 
     def _read_migrations(self) -> list[Migration]:
         migrations: OrderedDict[str, Migration] = OrderedDict()
         for directory in self._expand_sources():
-            for filename in sorted(os.listdir(directory)):
-                if not _is_migration_file(filename):
+            for filename in sorted(Path(directory).iterdir()):
+                if filename.is_dir():
                     continue
-                if filename.endswith(".rollback.sql"):
+                if filename.suffix != ".sql" or filename.name.endswith(".rollback.sql"):
                     continue
-                basename = os.path.splitext(filename)[0]
+                basename = filename.stem
                 if basename in HOOK_NAMES:
                     continue
                 if basename in migrations:
                     raise exceptions.MigrationConflict(basename)
-                path = os.path.join(directory, filename)
-                migrations[basename] = Migration(basename, path, source_dir=directory)
+                migrations[basename] = Migration(
+                    basename,
+                    str(filename),
+                    source_dir=str(directory),
+                )
         migrations_list = list(migrations.values())
         for m in migrations.values():
             m.load()
@@ -199,9 +218,9 @@ class MigrationsCollection:
         hooks: dict[str, list[Hook]] = {name: [] for name in HOOK_NAMES}
         for directory in self._expand_sources():
             for name in HOOK_NAMES:
-                path = os.path.join(directory, name + ".sql")
-                if os.path.isfile(path):
-                    hooks[name].append(Hook(name, path))
+                path = Path(directory) / f"{name}.sql"
+                if path.is_file():
+                    hooks[name].append(Hook(name, str(path)))
         return hooks
 
     def _topological(self, migrations: Iterable[Migration]) -> list[Migration]:
@@ -212,7 +231,7 @@ class MigrationsCollection:
             for d in m.depends:
                 if d not in all_ids:
                     raise exceptions.NoMigration(
-                        f"Could not resolve dependency {d!r} in {m.path}"
+                        f"Could not resolve dependency {d!r} in {m.path}",
                     )
         dependency_graph = {m: {by_id[d] for d in m.depends} for m in ml}
         try:
@@ -220,18 +239,24 @@ class MigrationsCollection:
         except CycleError as e:
             raise exceptions.BadMigration(
                 "Circular dependencies among these migrations {}".format(
-                    ", ".join(m.id for m in e.args[1])
-                )
-            )
+                    ", ".join(m.id for m in e.args[1]),
+                ),
+            ) from e
 
     @staticmethod
     def applied_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
+        """Return the ids with an ``APPLIED`` latest status in ``history``."""
         latest: dict[str, str] = {}
         for row in history:
             latest[row[0]] = row[2]
-        return {migration_id for migration_id, status in latest.items() if status == "APPLIED"}
+        return {
+            migration_id
+            for migration_id, status in latest.items()
+            if status == "APPLIED"
+        }
 
     def list(self) -> list[Migration]:
+        """Return all migrations in topological order."""
         if self._migrations is None:
             migrations = self._read_migrations()
             self._migrations = self._topological(migrations)
@@ -247,14 +272,17 @@ class MigrationsCollection:
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
+        """Return hooks and the migations that should be applied."""
         migrations = self.list()
         applied = self.applied_ids(history)
         result = [m for m in migrations if m.id not in applied]
         if target is not None:
-            target_ids = {m.id for m in migrations}
-            if target not in target_ids:
+            if target not in (m.id for m in migrations):
                 raise exceptions.NoMigration(f"Migration {target!r} not found")
-            target_idx = next((i for i, m in enumerate(migrations) if m.id == target), -1)
+            target_idx = next(
+                (i for i, m in enumerate(migrations) if m.id == target),
+                -1,
+            )
             keep_ids = {m.id for m in migrations[: target_idx + 1]}
             result = [m for m in result if m.id in keep_ids]
         hooks = self._get_hooks()
@@ -265,15 +293,18 @@ class MigrationsCollection:
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
+        """Return hooks and the migrations that should be rolled back."""
         migrations = self.list()
         applied = self.applied_ids(history)
         reversed_migrations = list(reversed(migrations))
         result = [m for m in reversed_migrations if m.id in applied]
         if target is not None:
-            target_ids = {m.id for m in migrations}
-            if target not in target_ids:
+            if target not in {m.id for m in migrations}:
                 raise exceptions.NoMigration(f"Migration {target!r} not found")
-            target_idx = next((i for i, m in enumerate(migrations) if m.id == target), -1)
+            target_idx = next(
+                (i for i, m in enumerate(migrations) if m.id == target),
+                -1,
+            )
             if target not in {m.id for m in result}:
                 result = []
             else:

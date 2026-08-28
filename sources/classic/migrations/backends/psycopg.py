@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""PostgreSQL backend implemented with the ``psycopg`` driver."""
+
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -23,11 +25,13 @@ from classic.migrations.backends.base import Backend
 
 
 class PsycopgBackend(Backend, driver=psycopg):
+    """PostgreSQL migration backend using the ``psycopg`` driver."""
 
     transactional_ddl = True
     supports_schemas = True
 
     def connect(self) -> psycopg.Connection:
+        """Open a PostgreSQL connection in autocommit mode."""
         kwargs: dict[str, Any] = {}
         if self.db_host is not None:
             kwargs["host"] = self.db_host
@@ -45,6 +49,7 @@ class PsycopgBackend(Backend, driver=psycopg):
         return conn
 
     def list_tables(self) -> list[str]:
+        """Return table names from the migration schema."""
         if self.migration_schema:
             cursor = self.execute(
                 "SELECT table_name FROM information_schema.tables "
@@ -54,14 +59,16 @@ class PsycopgBackend(Backend, driver=psycopg):
         else:
             cursor = self.execute(
                 "SELECT table_name FROM information_schema.tables "
-                "WHERE table_schema = current_schema()"
+                "WHERE table_schema = current_schema()",
             )
         return [row[0] for row in cursor.fetchall()]
 
     def ensure_migration_table(self) -> None:
+        """Create the migration schema (if any) and the history table."""
         if self.migration_schema:
             self.execute(
-                f"CREATE SCHEMA IF NOT EXISTS {self.quote_identifier(self.migration_schema)}"
+                "CREATE SCHEMA IF NOT EXISTS "
+                f"{self.quote_identifier(self.migration_schema)}",
             )
         super().ensure_migration_table()
 
@@ -71,37 +78,42 @@ class PsycopgBackend(Backend, driver=psycopg):
             "id SERIAL PRIMARY KEY, "
             "migration_id VARCHAR(255) NOT NULL, "
             "created_at TIMESTAMP NOT NULL, "
-            "status VARCHAR(16) NOT NULL)"
+            "status VARCHAR(16) NOT NULL)",
         )
 
     def _copy_versions(self) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "INSERT INTO "
+            f"{self.migration_table_quoted} (migration_id, created_at, status) "
             "SELECT migration_id, applied_at_utc, 'APPLIED' "
-            f"FROM {self.versions_table_quoted}"
+            f"FROM {self.versions_table_quoted}",
         )
 
     def _migration_history(self) -> list[tuple[Any, ...]]:
         cursor = self.execute(
             f"SELECT migration_id, created_at, status "
-            f"FROM {self.migration_table_quoted} ORDER BY id"
+            f"FROM {self.migration_table_quoted} ORDER BY id",
         )
         return [tuple(row) for row in cursor.fetchall()]
 
     def mark(self, migration_id: str, status: str) -> None:
+        """Append a migration history event."""
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "INSERT INTO "
+            f"{self.migration_table_quoted} (migration_id, created_at, status) "
             "VALUES (%s, %s, %s)",
             (migration_id, datetime.now(timezone.utc).replace(tzinfo=None), status),
         )
 
     def acquire_lock(self) -> None:
+        """Acquire a PostgreSQL advisory lock for this migration table."""
         lock_id = hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
         self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
 
     def release_lock(self) -> None:
+        """Release the PostgreSQL advisory lock."""
         lock_id = hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
@@ -109,13 +121,16 @@ class PsycopgBackend(Backend, driver=psycopg):
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
+        """Rollback any open transaction for the duration of the context."""
         self.rollback()
         yield
 
     def commit(self) -> None:
+        """Commit the current transaction."""
         self.execute("COMMIT")
         self._in_transaction = False
 
     def rollback(self) -> None:
+        """Rollback the current transaction."""
         self.execute("ROLLBACK")
         self._in_transaction = False

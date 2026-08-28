@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import pytest
@@ -7,15 +6,16 @@ from classic.migrations.migrations import Migration
 
 
 def write_file(path: Path, content: str) -> Path:
-    path_ = str(path)
-    os.makedirs(os.path.dirname(path_), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
     return path
 
 
 def make_history(*applied: str) -> list[tuple[str, str, str]]:
-    return [(migration_id, "2020-01-01 00:00:00", "APPLIED") for migration_id in applied]
+    return [
+        (migration_id, "2020-01-01 00:00:00", "APPLIED")
+        for migration_id in applied
+    ]
 
 
 class TestList:
@@ -107,7 +107,12 @@ class TestToApply:
         hooks, migrations = collection.to_apply(make_history("0001.a"))
 
         assert [m.id for m in migrations] == ["0002.b"]
-        assert set(hooks) == {"pre-apply", "post-apply", "pre-rollback", "post-rollback"}
+        assert set(hooks) == {
+            "pre-apply",
+            "post-apply",
+            "pre-rollback",
+            "post-rollback",
+        }
 
     def test_returns_all_when_nothing_applied(self, source: Path) -> None:
         write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
@@ -150,7 +155,10 @@ class TestToApply:
         write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
         collection = MigrationsCollection(sources=str(source))
 
-        _, migrations = collection.to_apply(make_history("0001.a", "0002.b"), target="0001.a")
+        _, migrations = collection.to_apply(
+            make_history("0001.a", "0002.b"),
+            target="0001.a",
+        )
 
         assert migrations == []
 

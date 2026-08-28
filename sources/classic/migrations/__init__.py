@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Public API for classic-migrations."""
+
 from classic.migrations.exceptions import (
     BadConnectionURI,
     BadMigration,

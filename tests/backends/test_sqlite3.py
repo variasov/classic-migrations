@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import Generator
 from pathlib import Path
 
@@ -88,18 +89,16 @@ def test_ensure_migration_table_idempotent(backend: SQLiteBackend) -> None:
 
 
 def test_copy_versions(tmp_path: Path) -> None:
-    import sqlite3
-
     db_file = tmp_path / "legacy.db"
     conn = sqlite3.connect(str(db_file))
     conn.execute(
         "CREATE TABLE versions ("
         "migration_hash VARCHAR(64), migration_id VARCHAR(255), "
-        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))"
+        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))",
     )
     conn.execute(
         "INSERT INTO versions (migration_hash, migration_id, applied_at_utc) "
-        "VALUES ('abc', '0001.old', '2020-01-01 00:00:00')"
+        "VALUES ('abc', '0001.old', '2020-01-01 00:00:00')",
     )
     conn.commit()
     conn.close()
@@ -143,12 +142,9 @@ def test_transaction_commit(backend: SQLiteBackend) -> None:
 
 def test_transaction_rollback(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
-    try:
-        with backend.transaction():
-            backend.mark("0001.init", "APPLIED")
-            raise RuntimeError("forced")
-    except RuntimeError:
-        pass
+    with pytest.raises(RuntimeError, match="forced"), backend.transaction():
+        backend.mark("0001.init", "APPLIED")
+        raise RuntimeError("forced")
     history = backend._migration_history()
     assert len(history) == 0
 

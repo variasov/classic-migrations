@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""SQLite backend implemented with the standard ``sqlite3`` driver."""
+
 import sqlite3
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -24,14 +26,17 @@ from classic.migrations.exceptions import MigrationLockError
 
 
 def _utcnow_str() -> str:
+    """Return the current UTC time as an ISO-formatted string."""
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(sep=" ")
 
 
 class SQLiteBackend(Backend, driver=sqlite3):
+    """SQLite migration backend using the standard ``sqlite3`` driver."""
 
     transactional_ddl = True
 
     def connect(self) -> sqlite3.Connection:
+        """Open a shared-cache SQLite connection with autocommit."""
         conn = self.driver.connect(
             f"file:{self.db_name}?cache=shared",
             uri=True,
@@ -40,6 +45,7 @@ class SQLiteBackend(Backend, driver=sqlite3):
         return conn
 
     def list_tables(self) -> list[str]:
+        """Return the names of all tables in the database."""
         cursor = self.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         return [row[0] for row in cursor.fetchall()]
 
@@ -49,46 +55,54 @@ class SQLiteBackend(Backend, driver=sqlite3):
             "id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "migration_id VARCHAR(255) NOT NULL, "
             "created_at TIMESTAMP NOT NULL, "
-            "status VARCHAR(16) NOT NULL)"
+            "status VARCHAR(16) NOT NULL)",
         )
 
     def _copy_versions(self) -> None:
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "INSERT INTO "
+            f"{self.migration_table_quoted} (migration_id, created_at, status) "
             "SELECT migration_id, applied_at_utc, 'APPLIED' "
-            f"FROM {self.versions_table_quoted}"
+            f"FROM {self.versions_table_quoted}",
         )
 
     def _migration_history(self) -> list[tuple[Any, ...]]:
         cursor = self.execute(
             "SELECT migration_id, created_at, status "
-            f"FROM {self.migration_table_quoted} ORDER BY id"
+            f"FROM {self.migration_table_quoted} ORDER BY id",
         )
         return [tuple(row) for row in cursor.fetchall()]
 
     def mark(self, migration_id: str, status: str) -> None:
+        """Append a migration history event."""
         self.execute(
-            f"INSERT INTO {self.migration_table_quoted} (migration_id, created_at, status) "
+            "INSERT INTO "
+            f"{self.migration_table_quoted} (migration_id, created_at, status) "
             "VALUES (?, ?, ?)",
             (migration_id, _utcnow_str(), status),
         )
 
     def acquire_lock(self) -> None:
+        """Acquire the SQLite write lock."""
         try:
             self.begin_immediate()
         except self.DatabaseError as e:
             raise MigrationLockError(
-                "Could not acquire advisory lock on the database"
+                "Could not acquire advisory lock on the database",
             ) from e
 
     def release_lock(self) -> None:
+        """Release the SQLite write lock."""
         self.commit()
 
     def begin_immediate(self) -> None:
-        assert not self._in_transaction
+        """Begin an immediate write transaction."""
+        if self._in_transaction:
+            raise RuntimeError("already in a transaction")
         self._in_transaction = True
         self.execute("BEGIN IMMEDIATE")
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
+        """Provide a transaction-disabled context (no-op for SQLite)."""
         yield

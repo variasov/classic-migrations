@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""The :class:`Migrator` that executes migrations through a backend."""
+
 from logging import getLogger
 from typing import Any, Self
 
@@ -44,6 +46,7 @@ class Migrator:
         migration_schema: str | None = None,
         versions_schema: str | None = None,
     ) -> None:
+        """Store connection settings; the backend is created on context entry."""
         if not driver:
             raise ValueError("driver must not be empty")
         self._driver = driver
@@ -58,6 +61,7 @@ class Migrator:
         self._backend: Backend | None = None
 
     def close(self) -> None:
+        """Close and forget the backend connection, if any."""
         if self._backend is not None:
             self._backend.close()
             self._backend = None
@@ -69,9 +73,11 @@ class Migrator:
 
     @property
     def backend(self) -> Backend:
+        """Return the active backend, raising if not in a context."""
         return self._require_backend()
 
     def __enter__(self) -> Self:
+        """Connect and acquire a lock on the database."""
         backend_class = Backend.get_implementation(self._driver)
         self._backend = backend_class(
             db_host=self._db_host,
@@ -87,6 +93,7 @@ class Migrator:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        """Rollback on error and close the connection."""
         if exc_type is not None and self._backend is not None:
             self._backend.rollback()
         self.close()
@@ -151,8 +158,16 @@ class Migrator:
     # ------------------------------------------------------------------
     # Execution helpers
     # ------------------------------------------------------------------
-    def _effective_transactional(self, migration: Migration, for_rollback: bool = False) -> bool:
-        tx_setting = migration.rollback_transactional if for_rollback else migration.transactional
+    def _effective_transactional(
+        self,
+        migration: Migration,
+        for_rollback: bool = False,
+    ) -> bool:
+        tx_setting = (
+            migration.rollback_transactional
+            if for_rollback
+            else migration.transactional
+        )
         if tx_setting is not None:
             return tx_setting
         return self._require_backend().transactional_ddl

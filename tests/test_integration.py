@@ -8,8 +8,7 @@ from classic.migrations import MigrationsCollection, Migrator
 
 
 def write_file(path: Path, content: str) -> Path:
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(content)
+    path.write_text(content, encoding="utf-8")
     return path
 
 

@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Base classes for database backends and transaction management."""
+
 from collections.abc import Generator
 from contextlib import contextmanager
 from types import TracebackType
@@ -27,12 +29,16 @@ ALL_STATUSES = (STATUS_PENDING, STATUS_APPLIED, STATUS_ROLLED_BACK)
 
 
 class TransactionManager:
+    """Context manager that wraps a block of work in a backend transaction."""
+
     def __init__(self, backend: "Backend") -> None:
+        """Initialize a transaction manager for ``backend``."""
         self.backend = backend
         self._started = False
 
     def __enter__(self) -> Self:
-        if not self.backend._in_transaction:  # noqa: SLF001
+        """Begin a transaction if one is not already open."""
+        if not self.backend.in_transaction:
             self.backend.begin()
             self._started = True
         return self
@@ -43,15 +49,23 @@ class TransactionManager:
         exc_value: BaseException | None,
         traceback: TracebackType | None,
     ) -> bool | None:
+        """Commit on success, rollback on error."""
         if exc_type:
             if self._started:
                 self.backend.rollback()
-            return
+            return None
         if self._started:
             self.backend.commit()
+        return None
 
 
 class Backend:
+    """Base class for database backends implementing migration operations.
+
+    Subclasses are registered via the ``driver=`` keyword argument, keyed by
+    ``driver.__name__`` in :attr:`implementations`.
+    """
+
     implementations: ClassVar[dict[str, type["Backend"]]] = {}
 
     driver: Any
@@ -63,6 +77,7 @@ class Backend:
     supports_schemas: ClassVar[bool] = False
 
     def __init_subclass__(cls, driver: Any = None, **kwargs: Any) -> None:
+        """Register concrete backends in :attr:`implementations` by driver."""
         super().__init_subclass__(**kwargs)
         if driver is not None:
             cls.driver = driver
@@ -70,10 +85,13 @@ class Backend:
 
     @classmethod
     def get_implementation(cls, name: str) -> type["Backend"]:
+        """Return the backend class registered for ``name``."""
         try:
             return cls.implementations[name]
-        except KeyError:
-            raise BadConnectionURI(f"Unrecognised database driver {name!r}")
+        except KeyError as exc:
+            raise BadConnectionURI(
+                f"Unrecognised database driver {name!r}",
+            ) from exc
 
     def __init__(
         self,
@@ -88,6 +106,7 @@ class Backend:
         versions_table: str = "versions",
         versions_schema: str | None = None,
     ) -> None:
+        """Connect to the database and prepare quoted table identifiers."""
         self.db_host = db_host
         self.db_port = db_port
         self.db_name = db_name
@@ -109,24 +128,27 @@ class Backend:
     # Abstract query methods — implemented by each backend.
     # ------------------------------------------------------------------
     def list_tables(self) -> list[str]:
-        raise NotImplementedError()
+        """Return the names of tables in the target schema/database."""
+        raise NotImplementedError
 
     def _create_migration_table(self) -> None:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _copy_versions(self) -> None:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _migration_history(self) -> list[tuple[Any, ...]]:
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def mark(self, migration_id: str, status: str) -> None:
-        raise NotImplementedError()
+        """Append a history event for ``migration_id`` with ``status``."""
+        raise NotImplementedError
 
     # ------------------------------------------------------------------
     # Generic orchestration (no SQL).
     # ------------------------------------------------------------------
     def ensure_migration_table(self) -> None:
+        """Create the migration table, migrating a legacy ``versions`` table."""
         if self.migration_table in self.list_tables():
             return
         if self.versions_table in self.list_tables():
@@ -136,9 +158,7 @@ class Backend:
             self._create_migration_table()
 
     def migration_history(self) -> list[tuple[Any, ...]]:
-        """
-        Return the full log of migration history events, in the order they
-        were recorded.
+        """Return the full history event log.
 
         Each row is ``(migration_id, created_at, status)``.
         """
@@ -150,23 +170,34 @@ class Backend:
     # ------------------------------------------------------------------
     @property
     def connection(self) -> Any:
+        """Return the underlying database connection."""
         return self._connection
 
+    @property
+    def in_transaction(self) -> bool:
+        """Return whether a transaction is currently open."""
+        return self._in_transaction
+
     def close(self) -> None:
+        """Close the underlying connection."""
         self.connection.close()
 
     def init_connection(self, connection: Any) -> None:
-        pass
+        """Apply any per-backend connection configuration (no-op by default)."""
 
     def connect(self) -> Any:
-        raise NotImplementedError()
+        """Establish and return a database connection."""
+        raise NotImplementedError
 
     def quote_identifier(self, s: str) -> str:
-        assert "\x00" not in s
+        """Return ``s`` quoted as a database identifier."""
+        if "\x00" in s:
+            raise ValueError("identifier must not contain NUL bytes")
         quoted = s.replace('"', '""')
         return f'"{quoted}"'
 
     def quote_table(self, name: str) -> str:
+        """Return ``name`` quoted, qualified by the migration schema if any."""
         if self.supports_schemas and self.migration_schema:
             return (
                 f"{self.quote_identifier(self.migration_schema)}."
@@ -175,6 +206,7 @@ class Backend:
         return self.quote_identifier(name)
 
     def quote_versions_table(self) -> str:
+        """Return the legacy ``versions`` table name, schema-qualified."""
         if self.supports_schemas and self.versions_schema:
             return (
                 f"{self.quote_identifier(self.versions_schema)}."
@@ -183,40 +215,49 @@ class Backend:
         return self.quote_identifier(self.versions_table)
 
     def transaction(self) -> TransactionManager:
+        """Return a transaction context manager."""
         return TransactionManager(self)
 
     def cursor(self) -> Any:
+        """Return a new database cursor."""
         return self.connection.cursor()
 
     def commit(self) -> None:
+        """Commit the current transaction."""
         self.connection.commit()
         self._in_transaction = False
 
     def rollback(self) -> None:
+        """Rollback the current transaction."""
         self.connection.rollback()
         self.init_connection(self.connection)
         self._in_transaction = False
 
     def begin(self) -> None:
+        """Begin a transaction."""
         self._in_transaction = True
         self.execute("BEGIN")
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:
+        """Provide a context in which transactions are disabled."""
         self.rollback()
         yield
 
     def acquire_lock(self) -> None:
+        """Acquire a session-level lock on the database."""
         raise NotImplementedError(
-            "Native session locking is not implemented for this backend"
+            "Native session locking is not implemented for this backend",
         )
 
     def release_lock(self) -> None:
+        """Release the session-level lock on the database."""
         raise NotImplementedError(
-            "Native session locking is not implemented for this backend"
+            "Native session locking is not implemented for this backend",
         )
 
     def execute(self, sql: str, params: Any = None) -> Any:
+        """Execute ``sql`` and return the cursor."""
         cursor = self.cursor()
         if params is None:
             cursor.execute(sql)
