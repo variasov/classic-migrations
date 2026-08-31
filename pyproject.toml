@@ -38,7 +38,7 @@ Homepage = "https://github.com/variasov/classic-migrations"
 mysql = ["PyMySQL"]
 postgres = ["psycopg~=3.3", "psycopg-binary~=3.3"]
 pyodbc = ["pyodbc"]
-pymssql = ["pymssql==2.3.1"]
+pymssql = ["pymssql~=2.3.13"]
 
 [project.scripts]
 migrations = "classic.migrations.cli:main"

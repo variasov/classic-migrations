@@ -36,6 +36,15 @@ except ImportError:
 else:
     PyMySQLBackend = _PyMySQLBackend
 
+try:
+    from classic.migrations.backends.pymssql import (
+        PyMSSQLBackend as _PyMSSQLBackend,
+    )
+except ImportError:
+    pass
+else:
+    PyMSSQLBackend = _PyMSSQLBackend
+
 __all__ = [
     "Backend",
     "SQLiteBackend",
