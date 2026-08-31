@@ -28,6 +28,15 @@ else:
     PsycopgBackend = _PsycopgBackend
 
 try:
+    from classic.migrations.backends.oracle import (
+        OracleBackend as _OracleBackend,
+    )
+except ImportError:
+    pass
+else:
+    OracleBackend = _OracleBackend
+
+try:
     from classic.migrations.backends.pymysql import (
         PyMySQLBackend as _PyMySQLBackend,
     )

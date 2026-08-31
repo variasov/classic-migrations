@@ -36,6 +36,7 @@ Homepage = "https://github.com/variasov/classic-migrations"
 
 [project.optional-dependencies]
 mysql = ["PyMySQL"]
+oracle = ["oracledb~=3.1"]
 postgres = ["psycopg~=3.3", "psycopg-binary~=3.3"]
 pyodbc = ["pyodbc"]
 pymssql = ["pymssql~=2.3.13"]
@@ -49,6 +50,11 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.4",
+    "oracledb~=3.1",
+    "psycopg~=3.3",
+    "psycopg-binary~=3.3",
+    "pymysql",
+    "pymssql~=2.3.13",
 ]
 
 [tool.setuptools]

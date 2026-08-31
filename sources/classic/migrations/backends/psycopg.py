@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
-from classic.migrations.backends.base import Backend
+from classic.migrations.backends.base import Backend, lock_hash
 
 
 class PsycopgBackend(Backend, driver=psycopg):
@@ -107,14 +107,14 @@ class PsycopgBackend(Backend, driver=psycopg):
 
     def acquire_lock(self) -> None:
         """Acquire a PostgreSQL advisory lock for this migration table."""
-        lock_id = hash(self.migration_table)
+        lock_id = lock_hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
         self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
 
     def release_lock(self) -> None:
         """Release the PostgreSQL advisory lock."""
-        lock_id = hash(self.migration_table)
+        lock_id = lock_hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
         self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))

@@ -15,6 +15,7 @@
 
 """Base classes for database backends and transaction management."""
 
+import hashlib
 from collections.abc import Generator
 from contextlib import contextmanager
 from types import TracebackType
@@ -26,6 +27,17 @@ STATUS_PENDING = "PENDING"
 STATUS_APPLIED = "APPLIED"
 STATUS_ROLLED_BACK = "ROLLED_BACK"
 ALL_STATUSES = (STATUS_PENDING, STATUS_APPLIED, STATUS_ROLLED_BACK)
+
+
+def lock_hash(identifier: str) -> int:
+    """Return a stable 64-bit hash of ``identifier``.
+
+    Unlike ``hash()``, this value is identical across Python processes
+    (``hash()`` is randomized per process via ``PYTHONHASHSEED``), so
+    advisory locks derived from it collide correctly across processes.
+    """
+    digest = hashlib.sha256(identifier.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 class TransactionManager:

@@ -1,0 +1,17 @@
+services:
+  oracle:
+    image: gvenzl/oracle-xe:18.4.0
+    environment:
+      ORACLE_PASSWORD: test
+      ORACLE_DATABASE: test
+      APP_USER: test
+      APP_USER_PASSWORD: test
+    ports:
+      - "1521:1521"
+    volumes:
+      - ./docker/oracle-init:/container-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
