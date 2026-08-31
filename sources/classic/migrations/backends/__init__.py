@@ -27,6 +27,15 @@ except ImportError:
 else:
     PsycopgBackend = _PsycopgBackend
 
+try:
+    from classic.migrations.backends.pymysql import (
+        PyMySQLBackend as _PyMySQLBackend,
+    )
+except ImportError:
+    pass
+else:
+    PyMySQLBackend = _PyMySQLBackend
+
 __all__ = [
     "Backend",
     "SQLiteBackend",

@@ -75,7 +75,6 @@ exclude = [
     "**/.pytest_cache",
     ".venv",
     "sources/classic/migrations/backends/contrib",
-    "sources/classic/migrations/backends/core/mysql.py",
 ]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = "none"
@@ -89,7 +88,6 @@ extraPaths = ["."]
 target-version = "py310"
 extend-exclude = [
     "sources/classic/migrations/backends/contrib",
-    "sources/classic/migrations/backends/core/mysql.py",
 ]
 
 [tool.ruff.lint]

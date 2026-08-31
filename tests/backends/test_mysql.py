@@ -1,14 +1,12 @@
 from collections.abc import Generator
-from pathlib import Path
 
-import psycopg
+import pymysql
 import pytest
-from classic.migrations import MigrationsCollection, Migrator
-from classic.migrations.backends.psycopg import PsycopgBackend
+from classic.migrations.backends.pymysql import PyMySQLBackend
 
 from tests.conftest import get_credentials
 
-_env = get_credentials("PG_")
+_env = get_credentials("MYSQL_")
 
 
 def _env_value(key: str) -> str:
@@ -17,35 +15,35 @@ def _env_value(key: str) -> str:
     return value
 
 
-def _pg_available() -> bool:
+def _mysql_available() -> bool:
     if not all(_env.values()):
         return False
     try:
-        conn = psycopg.connect(
+        conn = pymysql.connect(
             host=_env_value("host"),
             port=int(_env_value("port")),
-            dbname=_env_value("name"),
+            database=_env_value("name"),
             user=_env_value("user"),
             password=_env_value("password"),
         )
-    except psycopg.OperationalError:
+    except pymysql.OperationalError:
         return False
     conn.close()
     return True
 
 
 pytestmark = pytest.mark.skipif(
-    not _pg_available(),
+    not _mysql_available(),
     reason=(
-        "PostgreSQL unavailable: set PG_DATABASE_HOST, PG_DATABASE_PORT, "
-        "PG_DATABASE_NAME, PG_DATABASE_USER, PG_DATABASE_PASSWORD"
+        "MySQL unavailable: set MYSQL_DATABASE_HOST, MYSQL_DATABASE_PORT, "
+        "MYSQL_DATABASE_NAME, MYSQL_DATABASE_USER, MYSQL_DATABASE_PASSWORD"
     ),
 )
 
 
 @pytest.fixture
-def backend() -> Generator[PsycopgBackend, None, None]:
-    b = PsycopgBackend(
+def backend() -> Generator[PyMySQLBackend, None, None]:
+    b = PyMySQLBackend(
         db_host=_env_value("host"),
         db_port=int(_env_value("port")),
         db_name=_env_value("name"),
@@ -62,16 +60,16 @@ def backend() -> Generator[PsycopgBackend, None, None]:
         b.close()
 
 
-def test_list_tables_empty(backend: PsycopgBackend) -> None:
+def test_list_tables_empty(backend: PyMySQLBackend) -> None:
     assert backend.migration_table not in backend.list_tables()
 
 
-def test_create_migration_table(backend: PsycopgBackend) -> None:
+def test_create_migration_table(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     assert backend.migration_table in backend.list_tables()
 
 
-def test_mark_applied_inserts_event(backend: PsycopgBackend) -> None:
+def test_mark_applied_inserts_event(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "APPLIED")
 
@@ -81,7 +79,7 @@ def test_mark_applied_inserts_event(backend: PsycopgBackend) -> None:
     assert history[0][2] == "APPLIED"
 
 
-def test_unmark_appends_rolled_back_event(backend: PsycopgBackend) -> None:
+def test_unmark_appends_rolled_back_event(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "APPLIED")
     backend.mark("0001.init", "ROLLED_BACK")
@@ -93,7 +91,7 @@ def test_unmark_appends_rolled_back_event(backend: PsycopgBackend) -> None:
     assert history[0][0] == history[1][0] == "0001.init"
 
 
-def test_reapply_makes_migration_applied_again(backend: PsycopgBackend) -> None:
+def test_reapply_makes_migration_applied_again(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "APPLIED")
     backend.mark("0001.init", "ROLLED_BACK")
@@ -104,7 +102,7 @@ def test_reapply_makes_migration_applied_again(backend: PsycopgBackend) -> None:
     assert [row[2] for row in history] == ["APPLIED", "ROLLED_BACK", "APPLIED"]
 
 
-def test_pending_status(backend: PsycopgBackend) -> None:
+def test_pending_status(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "PENDING")
     backend.mark("0001.init", "APPLIED")
@@ -113,7 +111,7 @@ def test_pending_status(backend: PsycopgBackend) -> None:
     assert [row[2] for row in history] == ["PENDING", "APPLIED"]
 
 
-def test_rolled_back_migration_has_correct_status(backend: PsycopgBackend) -> None:
+def test_rolled_back_migration_has_correct_status(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.a", "APPLIED")
     backend.mark("0002.b", "APPLIED")
@@ -126,22 +124,22 @@ def test_rolled_back_migration_has_correct_status(backend: PsycopgBackend) -> No
     assert history[2][2] == "ROLLED_BACK"
 
 
-def test_ensure_migration_table_creates(backend: PsycopgBackend) -> None:
+def test_ensure_migration_table_creates(backend: PyMySQLBackend) -> None:
     backend.ensure_migration_table()
     assert backend.migration_table in backend.list_tables()
 
 
-def test_ensure_migration_table_idempotent(backend: PsycopgBackend) -> None:
+def test_ensure_migration_table_idempotent(backend: PyMySQLBackend) -> None:
     backend.ensure_migration_table()
     backend.ensure_migration_table()
     assert backend.migration_table in backend.list_tables()
 
 
-def test_copy_versions(backend: PsycopgBackend) -> None:
+def test_copy_versions(backend: PyMySQLBackend) -> None:
     backend.execute(
         f"CREATE TABLE {backend.versions_table_quoted} ("
         "migration_hash VARCHAR(64), migration_id VARCHAR(255), "
-        "applied_at_utc TIMESTAMP, PRIMARY KEY (migration_hash))",
+        "applied_at_utc DATETIME, PRIMARY KEY (migration_hash))",
     )
     backend.execute(
         f"INSERT INTO {backend.versions_table_quoted} "
@@ -157,7 +155,7 @@ def test_copy_versions(backend: PsycopgBackend) -> None:
     assert history[0][2] == "APPLIED"
 
 
-def test_lock_acquire_release(backend: PsycopgBackend) -> None:
+def test_lock_acquire_release(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.acquire_lock()
     backend.mark("0001.init", "APPLIED")
@@ -166,7 +164,7 @@ def test_lock_acquire_release(backend: PsycopgBackend) -> None:
     assert len(history) == 1
 
 
-def test_transaction_commit(backend: PsycopgBackend) -> None:
+def test_transaction_commit(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     with backend.transaction():
         backend.mark("0001.init", "APPLIED")
@@ -174,7 +172,7 @@ def test_transaction_commit(backend: PsycopgBackend) -> None:
     assert len(history) == 1
 
 
-def test_transaction_rollback(backend: PsycopgBackend) -> None:
+def test_transaction_rollback(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     with pytest.raises(RuntimeError, match="forced"), backend.transaction():
         backend.mark("0001.init", "APPLIED")
@@ -183,7 +181,7 @@ def test_transaction_rollback(backend: PsycopgBackend) -> None:
     assert len(history) == 0
 
 
-def test_disable_transactions_noop(backend: PsycopgBackend) -> None:
+def test_disable_transactions_noop(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     with backend.disable_transactions():
         backend.mark("0001.init", "APPLIED")
@@ -191,15 +189,15 @@ def test_disable_transactions_noop(backend: PsycopgBackend) -> None:
     assert len(history) == 1
 
 
-def test_quote_identifier(backend: PsycopgBackend) -> None:
-    assert backend.quote_identifier("my_table") == '"my_table"'
+def test_quote_identifier(backend: PyMySQLBackend) -> None:
+    assert backend.quote_identifier("my_table") == "`my_table`"
 
 
-def test_quote_identifier_with_quotes(backend: PsycopgBackend) -> None:
-    assert backend.quote_identifier('test"table') == '"test""table"'
+def test_quote_identifier_with_backticks(backend: PyMySQLBackend) -> None:
+    assert backend.quote_identifier("test`table") == "`test``table`"
 
 
-def test_execute_cursor(backend: PsycopgBackend) -> None:
+def test_execute_cursor(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "APPLIED")
     cursor = backend.execute(
@@ -211,7 +209,7 @@ def test_execute_cursor(backend: PsycopgBackend) -> None:
 
 
 def test_migration_table_quoted_custom_name() -> None:
-    b = PsycopgBackend(
+    b = PyMySQLBackend(
         db_host=_env_value("host"),
         db_port=int(_env_value("port")),
         db_name=_env_value("name"),
@@ -220,7 +218,7 @@ def test_migration_table_quoted_custom_name() -> None:
         migration_table="my_history",
     )
     try:
-        assert b.migration_table_quoted == '"my_history"'
+        assert b.migration_table_quoted == "`my_history`"
         b._create_migration_table()
         assert "my_history" in b.list_tables()
     finally:
@@ -228,7 +226,7 @@ def test_migration_table_quoted_custom_name() -> None:
         b.close()
 
 
-def test_migration_history_returns_all_events(backend: PsycopgBackend) -> None:
+def test_migration_history_returns_all_events(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.a", "APPLIED")
     backend.mark("0002.b", "APPLIED")
@@ -240,78 +238,8 @@ def test_migration_history_returns_all_events(backend: PsycopgBackend) -> None:
     assert [row[2] for row in history] == ["APPLIED", "APPLIED", "ROLLED_BACK"]
 
 
-def test_migration_history_no_comment_column(backend: PsycopgBackend) -> None:
+def test_migration_history_no_comment_column(backend: PyMySQLBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.a", "APPLIED")
     history = backend._migration_history()
     assert len(history[0]) == 3
-
-
-def test_migration_schema_creates_schema() -> None:
-    b = PsycopgBackend(
-        db_host=_env_value("host"),
-        db_port=int(_env_value("port")),
-        db_name=_env_value("name"),
-        db_user=_env_value("user"),
-        db_password=_env_value("password"),
-        migration_table="migrations",
-        migration_schema="migrations_schema_test",
-    )
-    try:
-        assert b.migration_table_quoted == '"migrations_schema_test"."migrations"'
-        b.ensure_migration_table()
-        assert "migrations" in b.list_tables()
-        history = b.migration_history()
-        assert history == []
-    finally:
-        b.execute('DROP SCHEMA IF EXISTS "migrations_schema_test" CASCADE')
-        b.close()
-
-
-class TestPsycopgLifecycle:
-    def _drop_all(self, db: Migrator) -> None:
-        backend = db.backend
-        backend.execute(f"DROP TABLE IF EXISTS {backend.migration_table_quoted}")
-        backend.execute(f"DROP TABLE IF EXISTS {backend.versions_table_quoted}")
-
-    def test_apply_and_rollback(self, source: Path) -> None:
-        def write_file(path: Path, content: str) -> Path:
-            path.write_text(content, encoding="utf-8")
-            return path
-
-        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
-        write_file(source / "0002.more.sql", "INSERT INTO foo VALUES (1);\n")
-        write_file(source / "0002.more.rollback.sql", "DELETE FROM foo;\n")
-        write_file(source / "0001.init.rollback.sql", "DROP TABLE foo;\n")
-
-        db = Migrator(
-            driver="psycopg",
-            db_host=_env_value("host"),
-            db_port=int(_env_value("port")),
-            db_name=_env_value("name"),
-            db_user=_env_value("user"),
-            db_pass=_env_value("password"),
-            migration_table="migrations_it",
-        )
-        migrations = MigrationsCollection(str(source))
-
-        try:
-            with db:
-                history = db.history()
-                hooks, unapplied = migrations.to_apply(history)
-                db.apply(unapplied, hooks)
-
-                history = db.history()
-                hooks, unapplied = migrations.to_apply(history)
-                assert unapplied == []
-
-                history = db.history()
-                hooks, to_rollback = migrations.to_rollback(history)
-                db.rollback(to_rollback, hooks)
-
-                history = db.history()
-                _, to_rollback = migrations.to_rollback(history)
-                assert to_rollback == []
-                self._drop_all(db)
-        finally:
-            pass
