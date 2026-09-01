@@ -15,16 +15,21 @@
 
 """Classes for reading migration files and computing apply/rollback plans."""
 
+from __future__ import annotations
+
 import re
 from collections import OrderedDict
-from collections.abc import Iterable
 from glob import glob
 from graphlib import CycleError, TopologicalSorter
 from logging import getLogger
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import sqlparse
 from classic.migrations import exceptions
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = getLogger("classic.migrations")
 

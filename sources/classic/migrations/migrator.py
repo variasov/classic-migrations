@@ -15,7 +15,7 @@
 """The :class:`Migrator` that executes migrations through a backend."""
 
 from logging import getLogger
-from typing import Any, Self
+from typing import Any
 
 from classic.migrations.backends.base import (
     STATUS_APPLIED,
@@ -24,6 +24,7 @@ from classic.migrations.backends.base import (
     Backend,
 )
 from classic.migrations.migrations import Hook, Migration
+from typing_extensions import Self
 
 logger = getLogger("classic.migrations")
 

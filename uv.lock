@@ -118,6 +118,7 @@ version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "sqlparse" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 
 [package.optional-dependencies]
@@ -156,6 +157,7 @@ requires-dist = [
     { name = "pymssql", marker = "extra == 'pymssql'", specifier = "~=2.3" },
     { name = "pymysql", marker = "extra == 'mysql'", specifier = "~=1.2" },
     { name = "sqlparse", specifier = "~=0.6" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.6" },
 ]
 provides-extras = ["mysql", "oracle", "postgres", "pymssql"]
 

@@ -20,9 +20,10 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from logging import getLogger
 from types import TracebackType
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar
 
 from classic.migrations.exceptions import BadConnectionURI
+from typing_extensions import Self
 
 logger = getLogger("classic.migrations")
 
