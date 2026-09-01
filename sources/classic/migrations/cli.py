@@ -27,10 +27,9 @@ from classic.migrations.migrator import Migrator
 from classic.migrations.settings import Settings
 
 verbosity_levels = {
-    0: logging.ERROR,
-    1: logging.WARNING,
-    2: logging.INFO,
-    3: logging.DEBUG,
+    0: logging.WARNING,
+    1: logging.INFO,
+    2: logging.DEBUG,
 }
 
 min_verbosity = min(verbosity_levels)
@@ -131,6 +130,15 @@ def _write_csv(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
     writer.writerows(rows)
 
 
+def _configure_logging(verbosity: int) -> None:
+    """Configure the root logger with the level selected by ``verbosity``."""
+    logging.basicConfig(
+        format="%(levelname)s %(name)s: %(message)s",
+        level=verbosity_levels[verbosity],
+        force=True,
+    )
+
+
 def _print_migrations(migrations: list[Any]) -> None:
     ids = [m.id for m in migrations]
     sources = [getattr(m, "source_dir", "") or "" for m in migrations]
@@ -207,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     verbosity = min(max_verbosity, max(min_verbosity, args.verbosity))
-    logging.basicConfig(level=verbosity_levels[verbosity])
+    _configure_logging(verbosity)
 
     try:
         return args.func(args)

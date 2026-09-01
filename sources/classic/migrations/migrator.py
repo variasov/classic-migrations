@@ -78,6 +78,7 @@ class Migrator:
 
     def __enter__(self) -> Self:
         """Connect and acquire a lock on the database."""
+        logger.debug("Connecting to %s database %s", self._driver, self._db_name)
         backend_class = Backend.get_implementation(self._driver)
         self._backend = backend_class(
             db_host=self._db_host,
@@ -90,11 +91,13 @@ class Migrator:
             versions_schema=self._versions_schema,
         )
         self._backend.acquire_lock()
+        logger.debug("Advisory lock acquired via %s", backend_class.__name__)
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         """Rollback on error and close the connection."""
         if exc_type is not None and self._backend is not None:
+            logger.warning("Rolling back transaction after error: %s", exc_value)
             self._backend.rollback()
         self.close()
 
@@ -104,8 +107,14 @@ class Migrator:
         Each row is ``(migration_id, created_at, status)``.
         """
         backend = self._require_backend()
+        logger.debug(
+            "Reading migration history from table %r",
+            backend.migration_table,
+        )
         backend.ensure_migration_table()
-        return backend.migration_history()
+        rows = backend.migration_history()
+        logger.debug("Read %d history event(s)", len(rows))
+        return rows
 
     def apply(
         self,
@@ -119,6 +128,13 @@ class Migrator:
         With ``fake=True`` only one ``APPLIED`` history event is recorded
         per migration, without any migration SQL or hooks.
         """
+        if fake:
+            logger.warning("Fake mode: only history records will be written")
+        elif migrations:
+            logger.info("Applying %d migration(s)", len(migrations))
+        else:
+            logger.info("Nothing to apply")
+
         if not fake:
             self._run_hooks(hooks.get("pre-apply", []))
         backend = self._require_backend()
@@ -143,6 +159,13 @@ class Migrator:
         With ``fake=True`` only one ``ROLLED_BACK`` history event is recorded
         per migration, without any migration SQL or hooks.
         """
+        if fake:
+            logger.warning("Fake mode: only history records will be written")
+        elif migrations:
+            logger.info("Rolling back %d migration(s)", len(migrations))
+        else:
+            logger.info("Nothing to rollback")
+
         if not fake:
             self._run_hooks(hooks.get("pre-rollback", []))
         backend = self._require_backend()
@@ -174,6 +197,12 @@ class Migrator:
 
     def _apply_one(self, migration: Migration) -> None:
         backend = self._require_backend()
+        logger.debug(
+            "Applying %s: %d statement(s), transactional=%s",
+            migration.id,
+            len(migration.apply_statements),
+            self._effective_transactional(migration),
+        )
         if self._effective_transactional(migration):
             with backend.transaction():
                 for stmt in migration.apply_statements:
@@ -188,8 +217,18 @@ class Migrator:
     def _rollback_one(self, migration: Migration) -> None:
         backend = self._require_backend()
         if not migration.rollback_statements:
+            logger.debug(
+                "Rolling back %s: no rollback file, marking only",
+                migration.id,
+            )
             backend.mark(migration.id, STATUS_ROLLED_BACK)
             return
+        logger.debug(
+            "Rolling back %s: %d statement(s), transactional=%s",
+            migration.id,
+            len(migration.rollback_statements),
+            self._effective_transactional(migration, for_rollback=True),
+        )
         if self._effective_transactional(migration, for_rollback=True):
             with backend.transaction():
                 for stmt in migration.rollback_statements:
@@ -202,7 +241,9 @@ class Migrator:
             backend.mark(migration.id, STATUS_ROLLED_BACK)
 
     def _execute_statement(self, stmt: str) -> None:
-        cursor = self._require_backend().cursor()
+        backend = self._require_backend()
+        logger.debug("Executing SQL: %s", stmt)
+        cursor = backend.cursor()
         try:
             cursor.execute(stmt)
         finally:
@@ -213,7 +254,14 @@ class Migrator:
         for hook in hooks:
             hook.load()
             if not hook.statements:
+                logger.debug("Skipping empty hook %s (%s)", hook.name, hook.path)
                 continue
+            logger.debug(
+                "Running hook %s (%s): %d statement(s)",
+                hook.name,
+                hook.path,
+                len(hook.statements),
+            )
             for stmt in hook.statements:
                 cursor = backend.cursor()
                 try:

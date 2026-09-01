@@ -18,10 +18,13 @@
 import hashlib
 from collections.abc import Generator
 from contextlib import contextmanager
+from logging import getLogger
 from types import TracebackType
 from typing import Any, ClassVar, Self
 
 from classic.migrations.exceptions import BadConnectionURI
+
+logger = getLogger("classic.migrations")
 
 STATUS_PENDING = "PENDING"
 STATUS_APPLIED = "APPLIED"
@@ -163,7 +166,12 @@ class Backend:
         """Create the migration table, migrating a legacy ``versions`` table."""
         if self.migration_table in self.list_tables():
             return
+        logger.info("Creating migration table %r", self.migration_table)
         if self.versions_table in self.list_tables():
+            logger.warning(
+                "Legacy %r table found; copying its records as APPLIED events",
+                self.versions_table,
+            )
             self._create_migration_table()
             self._copy_versions()
         else:

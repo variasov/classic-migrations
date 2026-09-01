@@ -1,14 +1,17 @@
 import argparse
+import logging
 from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
 from classic.migrations.cli import (
+    _configure_logging,
     build_parser,
     cmd_apply,
     cmd_list,
     cmd_rollback,
     main,
+    verbosity_levels,
 )
 from classic.migrations.migrations import Migration
 
@@ -92,8 +95,24 @@ class TestParser:
 
     def test_verbosity(self) -> None:
         parser = build_parser()
-        args = parser.parse_args(["apply", "-v", "-v", "-v"])
-        assert args.verbosity == 3
+        args = parser.parse_args(["apply", "-v", "-v"])
+        assert args.verbosity == 2
+
+    def test_verbosity_maps_default_to_warning(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply"])
+        assert args.verbosity == 0
+        assert verbosity_levels[args.verbosity] == logging.WARNING
+
+    def test_verbosity_maps_v_to_info(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply", "-v"])
+        assert verbosity_levels[args.verbosity] == logging.INFO
+
+    def test_verbosity_maps_vv_to_debug(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["apply", "-v", "-v"])
+        assert verbosity_levels[args.verbosity] == logging.DEBUG
 
     def test_removed_commands_not_recognized(self) -> None:
         parser = build_parser()
@@ -228,6 +247,16 @@ class TestCmdList:
         output = capsys.readouterr().out
         assert "0001.a" in output
         assert "0002.b" in output
+
+
+class TestLogging:
+    def test_configure_logging_sets_level(self) -> None:
+        _configure_logging(2)
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_configure_logging_default_is_warning(self) -> None:
+        _configure_logging(0)
+        assert logging.getLogger().level == logging.WARNING
 
 
 class TestMain:

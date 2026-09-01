@@ -126,6 +126,14 @@ class Migration:
         self.apply_statements = statements
         self.rollback_statements = rollback_statements
         self._loaded = True
+        logger.debug(
+            "Loaded %s: %d apply statement(s), %d rollback statement(s)",
+            self.id,
+            len(self.apply_statements),
+            len(self.rollback_statements),
+        )
+        if not self.apply_statements:
+            logger.warning("Migration %s has no SQL statements", self.id)
 
     def _load_rollback_directives(self, rb_directives: DirectivesType) -> None:
         for k in rb_directives:
@@ -194,6 +202,7 @@ class MigrationsCollection:
     def _read_migrations(self) -> list[Migration]:
         migrations: OrderedDict[str, Migration] = OrderedDict()
         for directory in self._expand_sources():
+            logger.debug("Reading migrations from source %s", directory)
             for filename in sorted(Path(directory).iterdir()):
                 if filename.is_dir():
                     continue
