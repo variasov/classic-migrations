@@ -217,6 +217,7 @@ jobs:
         ports:
           - 1521:1521
         options: >-
+          --name oracle
           --health-cmd "healthcheck.sh"
           --health-interval 10s
           --health-timeout 10s
@@ -242,6 +243,12 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
+
+      - name: Grant DBMS_LOCK to app user
+        run: |
+          docker exec -i --user oracle oracle bash -lc \
+            "export ORACLE_SID=FREE; sqlplus -S / as sysdba" \
+            < docker/oracle-init/01_grant_dbms_lock.sql
 
       - name: Run tests
         run: uv run pytest tests/backends/test_oracle.py -v

@@ -345,3 +345,23 @@ classic-migrations
 
 При первом запуске данные из legacy-таблицы ``versions`` (yoyo-migrations)
 переносятся как события ``APPLIED``; сама таблица не удаляется.
+
+
+Особенности бэкендов
+--------------------
+
+Oracle
+~~~~~~
+
+Бэкенд Oracle берёт advisory-lock через ``SYS.DBMS_LOCK.REQUEST``. Пользователю,
+под которым выполняются миграции, необходимо право ``EXECUTE`` на
+``SYS.DBMS_LOCK``; без него вход в ``with migrator:`` завершится ошибкой
+``MigrationLockError``.
+
+В контейнерных образах ``gvenzl/oracle-*`` это право выдаётся скриптом
+инициализации ``docker/oracle-init/01_grant_dbms_lock.sql``. Локально он
+монтируется в ``/container-entrypoint-initdb.d`` (см. ``docker-compose.yml``)
+и выполняется при первом старте контейнера. В CI (job ``test-oracle`` в
+``.github/workflows/test.yml``) скрипт выполняется после checkout через
+``docker exec``, поскольку сервис-контейнеры GitHub Actions стартуют до
+checkout и не позволяют смонтировать каталог из репозитория.
