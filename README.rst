@@ -4,12 +4,58 @@ classic-migrations
 
 Библиотека SQL-миграций для баз данных. Миграции — это обычные ``.sql`` файлы.
 
+Требования
+----------
+
+* Python >= 3.10.
+* Драйвер целевой СУБД (см. таблицу ниже). Для SQLite ничего дополнительно
+  устанавливать не нужно — используется модуль стандартной библиотеки
+  ``sqlite3``.
+
 Установка
 ---------
+
+Базовый пакет (включает только поддержку SQLite):
 
 .. code-block:: console
 
     pip install classic-migrations
+
+Поддержка конкретных СУБД подключается опциональными зависимостями (extras):
+
+.. list-table::
+   :header-rows: 1
+
+   * - СУБД
+     - extra
+     - драйвер (значение ``DATABASE_DRIVER``)
+   * - SQLite
+     - —
+     - ``sqlite3``
+   * - PostgreSQL
+     - ``postgres``
+     - ``psycopg``
+   * - MySQL
+     - ``mysql``
+     - ``pymysql``
+   * - Oracle
+     - ``oracle``
+     - ``oracledb``
+   * - Microsoft SQL Server
+     - ``pymssql``
+     - ``pymssql``
+
+.. code-block:: console
+
+    pip install classic-migrations[postgres]
+    pip install classic-migrations[mysql]
+
+Или через ``uv``:
+
+.. code-block:: console
+
+    uv add classic-migrations
+    uv add "classic-migrations[postgres]"
 
 Пакет предоставляет исполняемую команду ``migrations``:
 
@@ -21,8 +67,9 @@ classic-migrations
 Настройка
 ---------
 
-Все настройки читаются из переменных окружения или из ``.env`` файла в текущем
-каталоге.
+Все настройки читаются из переменных окружения или из ``.env`` файла
+в текущем каталоге. Переменные окружения имеют приоритет над значениями
+из ``.env``.
 
 Пример ``.env``:
 
@@ -57,11 +104,9 @@ classic-migrations
    * - ``SOURCES``
      - пути к каталогам миграций, разделённые двоеточием
      - *(пусто)*
-   * - ``MIGRATIONS_TABLE``
-     - имя таблицы истории
-     - ``migrations``
    * - ``DATABASE_DRIVER``
-     - имя модуля драйвера подключения (например ``sqlite3``, ``psycopg``)
+     - имя модуля драйвера подключения (``sqlite3``, ``psycopg``, ``pymysql``,
+       ``oracledb``, ``pymssql``)
      - *(пусто)*
    * - ``DATABASE_USER``
      - имя пользователя БД
@@ -76,10 +121,20 @@ classic-migrations
      - хост
      - *(пусто)*
    * - ``DATABASE_PORT``
-     - порт
+     - порт (преобразуется в целое число)
      - *(пусто)*
    * - ``DATABASE_NAME``
      - имя БД (или путь к файлу для SQLite)
+     - *(пусто)*
+   * - ``MIGRATIONS_TABLE``
+     - имя таблицы истории
+     - ``migrations``
+   * - ``MIGRATIONS_SCHEMA``
+     - схема, в которой размещается таблица истории (игнорируется для БД без
+       поддержки схем)
+     - *(пусто)*
+   * - ``OLD_MIGRATIONS_SCHEMA``
+     - схема legacy-таблицы ``versions`` (yoyo-migrations)
      - *(пусто)*
 
 
@@ -93,27 +148,30 @@ classic-migrations
 
 .. code-block:: sql
 
-    -- depends: 20260821_01_init
+    -- depends: 20260821_01_init, 20260822_02_users
     -- transactional: true
-    -- comment: создание таблицы пользователей
 
     CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);
 
 Директивы:
 
-* ``-- depends: <id> [<id> ...]`` — список миграций, от которых зависит текущая;
+* ``-- depends: <id>, <id>, ...`` — список миграций, от которых зависит
+  текущая, через запятую. Имена должны соответствовать реальным миграциям,
+  иначе выбрасывается исключение ``NoMigration``;
 * ``-- transactional: true|false`` — выполнять ли миграцию в транзакции
-  (по умолчанию ``true``);
-* ``-- comment: <текст>`` — комментарий, записываемый в таблицу истории.
+  (по умолчанию ``true``; если не указано — поведение определяется
+  возможностями СУБД).
 
 Для отката миграции используется файл ``<имя>.rollback.sql`` — имя с вставкой
-``.rollback`` перед расширением.
+``.rollback`` перед расширением, размещённый рядом с основной миграцией.
+У rollback-файла допускается только директива ``-- transactional``.
 
 Хуки
 ~~~~
 
-В каталоге миграций могут находиться зарезервированные файлы-хуки (не являются
-миграциями, не попадают в таблицу истории):
+В каталоге миграций могут находиться зарезервированные файлы-хуки. Они не
+являются миграциями, не попадают в таблицу истории и всегда выполняются вне
+транзакции:
 
 * ``pre-apply.sql`` — выполняется перед применением набора миграций;
 * ``post-apply.sql`` — после применения набора миграций;
@@ -124,9 +182,12 @@ classic-migrations
 Команды
 -------
 
+Доступные команды: ``list``, ``apply``, ``rollback``.
+
 Общий параметр, принимаемый всеми командами:
 
-* ``-v`` — увеличить подробность вывода (можно повторять).
+* ``-v`` — увеличить подробность вывода. Можно повторять:
+  ``-v`` → WARNING, ``-vv`` → INFO, ``-vvv`` → DEBUG (по умолчанию ERROR).
 
 ``list``
 ~~~~~~~~
@@ -171,45 +232,94 @@ classic-migrations
 * ``--plan`` — не откатывать миграции, а только вывести список тех, которые
   можно откатить в текущей БД.
 
-Для отката у миграции должен существовать ``.rollback.sql`` файл.
+Если у миграции нет ``.rollback.sql`` файла, при откате записывается только
+событие ``ROLLED_BACK`` в историю — SQL не выполняется.
 
 
 Использование как библиотеки
 ----------------------------
 
-.. code-block:: python
+Публичный API::
 
-    from classic.migrations import Migrator, MigrationsCollection
-
-    db = Migrator(driver='sqlite3', db_name='db.sqlite')
-    migrations = MigrationsCollection('./migrations')
-
-    with db.lock() as lock:
-        history = db.history(lock)
-        hooks, unapplied = migrations.to_apply(history)
-        db.apply(lock, hooks, unapplied)
+    from classic.migrations import (
+        BadConnectionURI,
+        BadMigration,
+        InvalidArgument,
+        MigrationConflict,
+        MigrationLockError,
+        MigrationsCollection,
+        Migrator,
+        NoMigration,
+    )
 
 ``MigrationsCollection`` работает только с источниками миграций (каталогами
 ``.sql`` файлов) и не имеет доступа к БД:
 
+* ``MigrationsCollection(sources)`` — ``sources`` — путь к каталогу миграций
+  (строка) или список путей. Читает миграции и хуки один раз и переиспользует
+  их при последующих вызовах;
 * ``list()`` — список миграций источника, отсортированный топологически;
 * ``to_apply(history, target=None)`` — по логу событий истории вычисляет
   применённые и возвращает ``(hooks, migrations)``: хуки и неприменённые
   миграции в топологическом порядке; ``target`` — «до указанной включительно»;
 * ``to_rollback(history, target=None)`` — аналогично, но возвращает
-  применённые миграции в обратном топологическом порядке.
+  применённые миграции в обратном топологическом порядке;
+* ``applied_ids(history)`` — статический метод: возвращает множество id
+  миграций, чей последний статус в истории — ``APPLIED``.
 
 ``Migrator`` принимает параметры БД, выбирает ``Backend`` по имени драйвера
-и выполняет миграции:
+и выполняет миграции (сам не содержит SQL). Параметры конструктора:
 
-* ``lock()`` — контекстный менеджер advisory-лока; полученный lock передаётся
-  в остальные методы;
-* ``history(lock)`` — лог событий таблицы истории;
-* ``apply(lock, hooks, migrations, fake=False)`` — применяет миграции;
-  ``fake=True`` — только записи в истории, без SQL и хуков;
-* ``rollback(lock, hooks, migrations, fake=False)`` — откатывает миграции
+* ``driver`` — имя модуля драйвера (``sqlite3``, ``psycopg``, ``pymysql``,
+  ``oracledb``, ``pymssql``);
+* ``db_host``, ``db_port``, ``db_name``, ``db_user``, ``db_pass`` — параметры
+  подключения;
+* ``migration_table='migrations'`` — имя таблицы истории;
+* ``migration_schema=None`` — схема таблицы истории;
+* ``versions_schema=None`` — схема legacy-таблицы ``versions``.
+
+``Migrator`` — контекстный менеджер: при входе устанавливает соединение
+и берёт advisory-lock, при выходе закрывает соединение. Методы должны
+вызываться только внутри ``with``:
+
+* ``history()`` — лог событий таблицы истории (список кортежей
+  ``(migration_id, created_at, status)``);
+* ``apply(migrations, hooks, fake=False)`` — применяет миграции; ``fake=True``
+  — только записи в истории, без SQL и хуков;
+* ``rollback(migrations, hooks, fake=False)`` — откатывает миграции
   (аналогично ``apply``);
-* ``close()`` / контекстный менеджер — закрывают соединение.
+* ``close()`` — закрывает соединение (обычно не нужен — соединение
+  закрывается при выходе из ``with``).
+
+Применение миграций:
+
+.. code-block:: python
+
+    from classic.migrations import Migrator, MigrationsCollection
+
+    db = Migrator(
+        driver='psycopg',
+        db_host='localhost',
+        db_port=5432,
+        db_name='tests',
+        db_user='test',
+        db_pass='test',
+    )
+    migrations = MigrationsCollection('./migrations')
+
+    with db:
+        history = db.history()
+        hooks, unapplied = migrations.to_apply(history)
+        db.apply(unapplied, hooks)
+
+Откат миграций:
+
+.. code-block:: python
+
+    with db:
+        history = db.history()
+        hooks, applied = migrations.to_rollback(history)
+        db.rollback(applied, hooks)
 
 
 Схема таблицы истории
@@ -222,14 +332,16 @@ classic-migrations
     CREATE TABLE {migration_table} (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         migration_id VARCHAR(255) NOT NULL,
-        applied_at   TIMESTAMP NOT NULL,
-        comment      VARCHAR(255) NULL,
-        status       VARCHAR(16) NOT NULL  -- 'applied' | 'rolled_back'
+        created_at   TIMESTAMP NOT NULL,
+        status       VARCHAR(16) NOT NULL  -- 'APPLIED' | 'ROLLED_BACK' | 'PENDING'
     );
 
 Каждое применение или откат миграции дописывает строку-событие. Актуальный
 статус миграции определяется её последним событием. Сверка хешей применённых
 миграций не выполняется.
 
+Для нетранзакционных СУБД запись в историю производится до применения
+(статус ``PENDING``), а после успешного выполнения — ``APPLIED``.
+
 При первом запуске данные из legacy-таблицы ``versions`` (yoyo-migrations)
-переносятся как события ``applied``; сама таблица не удаляется.
+переносятся как события ``APPLIED``; сама таблица не удаляется.
