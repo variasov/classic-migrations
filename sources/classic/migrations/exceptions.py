@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,26 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-DatabaseErrors = []
+"""Exception types used throughout the library."""
 
 
-def register(exception_class):
-    DatabaseErrors.append(exception_class)
+class InvalidArgument(Exception):
+    """Invalid CLI argument."""
+
+
+class BadConnectionURI(Exception):
+    """An invalid connection URI."""
 
 
 class BadMigration(Exception):
-    """
-    The migration file could not be compiled
-    """
+    """The migration file could not be compiled."""
 
 
 class MigrationConflict(Exception):
-    """
-    The migration id conflicts with another migration
-    """
+    """The migration id conflicts with another migration."""
 
 
-class LockTimeout(Exception):
-    """
-    Timeout was reached while acquiring the migration lock
-    """
+class NoMigration(Exception):
+    """The migration name could not be resolved."""
+
+
+class MigrationLockError(Exception):
+    """Could not acquire an advisory lock on the database."""

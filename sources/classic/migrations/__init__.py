@@ -1,4 +1,5 @@
 # Copyright 2015 Oliver Cope
+# Copyright 2026 Sergey Variasov
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,27 +13,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-__all__ = [
-    "ancestors",
-    "default_migration_table",
-    "descendants",
-    "get_backend",
-    "group",
-    "logger",
-    "read_migrations",
-    "step",
-    "transaction",
-]
+"""Public API for classic-migrations."""
 
-from classic.migrations.connections import get_backend
-from classic.migrations.migrations import ancestors
-from classic.migrations.migrations import default_migration_table
-from classic.migrations.migrations import descendants
-from classic.migrations.migrations import group
-from classic.migrations.migrations import logger
-from classic.migrations.migrations import read_migrations
-from classic.migrations.migrations import step
-from classic.migrations.migrations import transaction
+from classic.migrations.exceptions import (
+    BadConnectionURI,
+    BadMigration,
+    InvalidArgument,
+    MigrationConflict,
+    MigrationLockError,
+    NoMigration,
+)
+from classic.migrations.migrations import MigrationsCollection
+from classic.migrations.migrator import Migrator
 
-__version__ = "8.2.0"
+__version__ = "2.0.0"
 
+__all__ = (
+    "BadConnectionURI",
+    "BadMigration",
+    "InvalidArgument",
+    "MigrationConflict",
+    "MigrationLockError",
+    "MigrationsCollection",
+    "Migrator",
+    "NoMigration",
+    "__version__",
+)

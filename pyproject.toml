@@ -4,3 +4,136 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "classic-migrations"
+version = "2.0.0"
+description = "Database migrations with SQL"
+readme = "README.rst"
+authors = [
+    { name = "Sergey Variasov", email = "variasov@gmail.com" },
+]
+keywords = ["migrations", "migrate", "database", "alembic", "south"]
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Topic :: Database",
+    "Topic :: Database :: Front-Ends",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Version Control",
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "sqlparse~=0.6",
+    "typing_extensions>=4.6; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/variasov/classic-migrations"
+
+[project.optional-dependencies]
+mysql = ["PyMySQL~=1.2"]
+oracle = ["oracledb~=3.1"]
+postgres = ["psycopg~=3.3", "psycopg-binary~=3.3"]
+pymssql = ["pymssql~=2.3"]
+
+[project.scripts]
+migrations = "classic.migrations.cli:main"
+
+[dependency-groups]
+dev = [
+    "pyright[nodejs]~=1.1.411",
+    "pytest~=9.1.1",
+    "pytest-cov~=7.1",
+    "ruff~=0.16.4",
+    "oracledb~=3.1",
+    "psycopg~=3.3",
+    "psycopg-binary~=3.3",
+    "pymysql~=1.2",
+    "pymssql~=2.3",
+]
+
+[tool.setuptools]
+package-dir = { "" = "sources" }
+
+[tool.setuptools.packages.find]
+where = ["sources"]
+namespaces = true
+
+[tool.pytest.ini_options]
+addopts = "--cov=classic --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["classic"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.pyright]
+include = ["sources", "tests"]
+exclude = [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    ".venv",
+    "sources/classic/migrations/backends/contrib",
+]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "tests"
+reportPrivateUsage = "none"
+extraPaths = ["."]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = [
+    "sources/classic/migrations/backends/contrib",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",     # keeps D211: no blank line before class docstring
+    "D213",     # keeps D212: multi-line summary on first line
+    "EM",       # error-message style is overly prescriptive
+    "TRY003",   # long exception messages are an API concern
+    "ANN401",   # DB driver objects are dynamically typed
+    "N802",     # Settings properties mirror environment variable names
+    "N818",     # exception names are part of the public API
+    "A002",     # Migration(id=...) is defined by the spec
+    "A003",     # MigrationsCollection.list() is defined by the spec
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "SLF001",
+    "S101",     # `assert` is idiomatic in pytest
+    "D",        # tests do not need docstrings
+    "ANN",      # test annotations are optional
+    "FBT",      # boolean positional args in test helpers
+    "PLR2004",  # magic values are acceptable in assertions
+    "PLR0913",  # many-argument test helpers
+    "PT011",    # broad pytest.raises is acceptable in tests
+    "PT012",    # pytest.raises blocks may legitimately hold several statements
+    "ARG",      # unused fixture/helper args
+    "CPY001",   # tests do not carry copyright headers
+    "S608",     # SQL strings in tests are not injection vectors
+]
+"sources/classic/migrations/backends/*.py" = [
+    "S608",     # identifier interpolation is quoted and intentional
+]
+"sources/classic/migrations/backends/base.py" = [
+    "PLR0913",  # connection config takes many explicit kwargs
+    "PLR0917",
+]
+"sources/classic/migrations/migrator.py" = [
+    "FBT",      # apply/rollback take a spec-defined `fake` flag
+    "PLR0913",  # connection config takes many explicit kwargs
+    "PLR0917",
+]

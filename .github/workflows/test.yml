@@ -1,0 +1,254 @@
+---
+name: Tests
+
+on:  # yamllint disable-line rule:truthy
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  test-sqlite:
+    name: SQLite / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest tests/ -v
+
+
+  test-postgresql:
+    name: PostgreSQL / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PG_DATABASE_HOST: localhost
+      PG_DATABASE_PORT: '5432'
+      PG_DATABASE_NAME: test
+      PG_DATABASE_USER: test
+      PG_DATABASE_PASSWORD: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest tests/backends/test_psycopg.py -v
+
+
+  test-mysql:
+    name: MySQL / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: test
+          MYSQL_DATABASE: test
+          MYSQL_USER: test
+          MYSQL_PASSWORD: test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MYSQL_DATABASE_HOST: '127.0.0.1'
+      MYSQL_DATABASE_PORT: '3306'
+      MYSQL_DATABASE_NAME: test
+      MYSQL_DATABASE_USER: test
+      MYSQL_DATABASE_PASSWORD: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest tests/backends/test_mysql.py -v
+
+
+  test-mssql:
+    name: MSSQL / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: TestPass123!
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa
+          -P TestPass123! -C -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 15
+          --health-start-period 30s
+
+    env:
+      MS_SQL_DATABASE_HOST: localhost
+      MS_SQL_DATABASE_PORT: '1433'
+      MS_SQL_DATABASE_NAME: master
+      MS_SQL_DATABASE_USER: sa
+      MS_SQL_DATABASE_PASSWORD: TestPass123!
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest tests/backends/test_pymssql.py -v
+
+
+  test-oracle:
+    name: Oracle / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.10'
+          - '3.11'
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    services:
+      oracle:
+        image: gvenzl/oracle-free:23-slim
+        env:
+          ORACLE_PASSWORD: test
+          APP_USER: test
+          APP_USER_PASSWORD: test
+        ports:
+          - 1521:1521
+        options: >-
+          --name oracle
+          --health-cmd "healthcheck.sh"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+          --health-start-period 60s
+          --shm-size 2g
+
+    env:
+      ORACLE_DATABASE_HOST: localhost
+      ORACLE_DATABASE_PORT: '1521'
+      ORACLE_DATABASE_NAME: FREEPDB1
+      ORACLE_DATABASE_USER: test
+      ORACLE_DATABASE_PASSWORD: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Grant DBMS_LOCK to app user
+        run: |
+          docker exec -i --user oracle oracle bash -lc \
+            "export ORACLE_SID=FREE; sqlplus -S / as sysdba" \
+            < docker/oracle-init/01_grant_dbms_lock.sql
+
+      - name: Run tests
+        run: uv run pytest tests/backends/test_oracle.py -v
