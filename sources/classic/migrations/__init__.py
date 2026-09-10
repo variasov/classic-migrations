@@ -23,8 +23,10 @@ from classic.migrations.exceptions import (
     MigrationLockError,
     NoMigration,
 )
-from classic.migrations.migrations import MigrationsCollection
-from classic.migrations.migrator import Migrator
+
+from .migrations import MigrationsCollection
+from .migrator import Migrator
+from .settings import Settings
 
 __version__ = "2.0.0"
 
@@ -37,5 +39,6 @@ __all__ = (
     "MigrationsCollection",
     "Migrator",
     "NoMigration",
+    "Settings",
     "__version__",
 )
