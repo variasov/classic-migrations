@@ -15,7 +15,8 @@
 
 """Public API for classic-migrations."""
 
-from classic.migrations.exceptions import (
+from .cli import CLI
+from .exceptions import (
     BadConnectionURI,
     BadMigration,
     InvalidArgument,
@@ -23,7 +24,6 @@ from classic.migrations.exceptions import (
     MigrationLockError,
     NoMigration,
 )
-
 from .migrations import MigrationsCollection
 from .migrator import Migrator
 from .settings import Settings
@@ -31,6 +31,7 @@ from .settings import Settings
 __version__ = "2.0.0"
 
 __all__ = (
+    "CLI",
     "BadConnectionURI",
     "BadMigration",
     "InvalidArgument",

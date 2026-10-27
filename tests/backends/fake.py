@@ -137,9 +137,11 @@ class FakeBackend(Backend, driver=_FakeDriver):
 
     def acquire_lock(self) -> None:
         self._locked_flag = True
+        self._oplog.append(("acquire_lock", None))
 
     def release_lock(self) -> None:
         self._locked_flag = False
+        self._oplog.append(("release_lock", None))
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:

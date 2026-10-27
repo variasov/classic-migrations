@@ -36,188 +36,214 @@ min_verbosity = min(verbosity_levels)
 max_verbosity = max(verbosity_levels)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build and return the argument parser for the CLI."""
-    parser = argparse.ArgumentParser(prog="migrations")
+class CLI:
+    """Класс, запускающий миграции при запуске из CLI."""
 
-    common = argparse.ArgumentParser(add_help=False)
-    common.add_argument(
-        "-v",
-        dest="verbosity",
-        action="count",
-        default=min_verbosity,
-        help="Verbose output. Use multiple times to increase level of verbosity",
-    )
+    _collection: MigrationsCollection
+    _migrator: Migrator
 
-    subparsers = parser.add_subparsers(dest="command", required=False)
+    def __init__(
+        self,
+        collection: MigrationsCollection | None = None,
+        migrator: Migrator | None = None,
+    ) -> None:
+        """Инициализировать CLI.
 
-    p = subparsers.add_parser("apply", parents=[common], help="Apply migrations")
-    p.add_argument(
-        "migration_name",
-        nargs="?",
-        default=None,
-        help="Apply migrations up to and including this one",
-    )
-    p.add_argument(
-        "--fake",
-        action="store_true",
-        help="Only create history records, without running the migrations",
-    )
-    p.add_argument(
-        "--plan",
-        action="store_true",
-        help="Do not apply migrations, only list those that could be applied",
-    )
-    p.set_defaults(func=cmd_apply)
+        Если ``collection`` или ``migrator`` не переданы, они создаются
+        из настроек окружения (:class:`Settings`).
+        """
+        self._collection = collection or self._make_collection()
+        self._migrator = migrator or self._make_migrator()
 
-    p = subparsers.add_parser(
-        "list",
-        parents=[common],
-        help="List all available and applied migrations",
-    )
-    p.add_argument(
-        "--history",
-        action="store_true",
-        help="Show only applied migrations",
-    )
-    p.set_defaults(func=cmd_list)
+    def build_parser(self) -> argparse.ArgumentParser:
+        """Собрать и вернуть парсер аргументов командной строки."""
+        parser = argparse.ArgumentParser(prog="migrations")
+        common = argparse.ArgumentParser(add_help=False)
+        common.add_argument(
+            "-v",
+            dest="verbosity",
+            action="count",
+            default=min_verbosity,
+            help="Verbose output. Use multiple times to increase level of verbosity",
+        )
+        subparsers = parser.add_subparsers(dest="command", required=False)
+        p = subparsers.add_parser("apply", parents=[common], help="Apply migrations")
+        p.add_argument(
+            "migration_name",
+            nargs="?",
+            default=None,
+            help="Apply migrations up to and including this one",
+        )
+        p.add_argument(
+            "--fake",
+            action="store_true",
+            help="Only create history records, without running the migrations",
+        )
+        p.add_argument(
+            "--plan",
+            action="store_true",
+            help="Do not apply migrations, only list those that could be applied",
+        )
+        p.set_defaults(func=self._apply)
 
-    p = subparsers.add_parser("rollback", parents=[common], help="Rollback migrations")
-    p.add_argument(
-        "migration_name",
-        nargs="?",
-        default=None,
-        help="Rollback migrations up to and including this one",
-    )
-    p.add_argument(
-        "--fake",
-        action="store_true",
-        help="Only create history records, without running the migrations",
-    )
-    p.add_argument(
-        "--plan",
-        action="store_true",
-        help="Do not rollback migrations, only list those that could be rolled back",
-    )
-    p.set_defaults(func=cmd_rollback)
+        p = subparsers.add_parser(
+            "list",
+            parents=[common],
+            help="List all available and applied migrations",
+        )
+        p.add_argument(
+            "--history",
+            action="store_true",
+            help="Show only applied migrations",
+        )
+        p.set_defaults(func=self._list)
 
-    return parser
+        p = subparsers.add_parser(
+            "rollback", parents=[common], help="Rollback migrations",
+        )
+        p.add_argument(
+            "migration_name",
+            nargs="?",
+            default=None,
+            help="Rollback migrations up to and including this one",
+        )
+        p.add_argument(
+            "--fake",
+            action="store_true",
+            help="Only create history records, without running the migrations",
+        )
+        p.add_argument(
+            "--plan",
+            action="store_true",
+            help=(
+                "Do not rollback migrations, only list those that could be rolled back"
+            ),
+        )
+        p.set_defaults(func=self._rollback)
+        return parser
 
+    def _make_collection(self) -> MigrationsCollection:
+        """Создать коллекцию миграций из каталогов-источников из настроек."""
+        settings = Settings()
+        return MigrationsCollection(sources=settings.sources_list)
 
-def _make_collection() -> MigrationsCollection:
-    settings = Settings()
-    return MigrationsCollection(sources=settings.sources_list)
+    def _make_migrator(self) -> Migrator:
+        """Создать мигратор на основе настроек окружения."""
+        settings = Settings()
+        return Migrator(
+            driver=settings.DATABASE_DRIVER,
+            db_host=settings.DATABASE_HOST,
+            db_port=settings.DATABASE_PORT,
+            db_name=settings.DATABASE_NAME,
+            db_user=settings.DATABASE_USER,
+            db_pass=settings.DATABASE_PASSWORD,
+            migration_table=settings.MIGRATIONS_TABLE,
+            migration_schema=settings.MIGRATIONS_SCHEMA,
+            versions_schema=settings.OLD_MIGRATIONS_SCHEMA,
+        )
 
+    def _write_csv(self, header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
+        """Записать в stdout CSV-таблицу: заголовок ``header``, строки ``rows``."""
+        writer = csv.writer(sys.stdout)
+        writer.writerow(header)
+        writer.writerows(rows)
 
-def _make_migrator() -> Migrator:
-    settings = Settings()
-    return Migrator(
-        driver=settings.DATABASE_DRIVER,
-        db_host=settings.DATABASE_HOST,
-        db_port=settings.DATABASE_PORT,
-        db_name=settings.DATABASE_NAME,
-        db_user=settings.DATABASE_USER,
-        db_pass=settings.DATABASE_PASSWORD,
-        migration_table=settings.MIGRATIONS_TABLE,
-        migration_schema=settings.MIGRATIONS_SCHEMA,
-        versions_schema=settings.OLD_MIGRATIONS_SCHEMA,
-    )
+    def _configure_logging(self, verbosity: int) -> None:
+        """Настроить корневой логгер по выбранному уровню ``verbosity``."""
+        logging.basicConfig(
+            format="%(levelname)s %(name)s: %(message)s",
+            level=verbosity_levels[verbosity],
+            force=True,
+        )
 
+    def _print_migrations(self, migrations: list[Any]) -> None:
+        """Вывести миграции в виде CSV-таблицы: идентификатор и каталог-источник."""
+        ids = [m.id for m in migrations]
+        sources = [getattr(m, "source_dir", "") or "" for m in migrations]
+        self._write_csv(("ID", "SOURCE"), list(zip(ids, sources, strict=False)))
 
-def _write_csv(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
-    writer = csv.writer(sys.stdout)
-    writer.writerow(header)
-    writer.writerows(rows)
+    def _apply(self, args: argparse.Namespace) -> int:
+        """Применить ожидающие миграции до ``args.migration_name`` включительно."""
+        with self._migrator:
+            history = self._migrator.history()
+            hooks, migrations = self._collection.to_apply(
+                history, target=args.migration_name,
+            )
+            if args.plan:
+                self._print_migrations(migrations)
+            else:
+                self._migrator.apply(migrations, hooks, fake=args.fake)
+        return 0
 
+    def _list(self, args: argparse.Namespace) -> int:
+        """Вывести список миграций и их статус: A — применена, U — нет."""
+        with self._migrator:
+            history = self._migrator.history()
 
-def _configure_logging(verbosity: int) -> None:
-    """Configure the root logger with the level selected by ``verbosity``."""
-    logging.basicConfig(
-        format="%(levelname)s %(name)s: %(message)s",
-        level=verbosity_levels[verbosity],
-        force=True,
-    )
+        applied = MigrationsCollection.applied_ids(history)
+        migrations = self._collection.list()
 
-
-def _print_migrations(migrations: list[Any]) -> None:
-    ids = [m.id for m in migrations]
-    sources = [getattr(m, "source_dir", "") or "" for m in migrations]
-    _write_csv(("ID", "SOURCE"), list(zip(ids, sources, strict=False)))
-
-
-def cmd_apply(args: argparse.Namespace) -> int:
-    """Apply pending migrations up to and including ``args.migration_name``."""
-    collection = _make_collection()
-    migrator = _make_migrator()
-    with migrator:
-        history = migrator.history()
-        hooks, migrations = collection.to_apply(history, target=args.migration_name)
-        if args.plan:
-            _print_migrations(migrations)
+        if args.history:
+            rows = [
+                ("A", m.id, m.source_dir or "") for m in migrations if m.id in applied
+            ]
         else:
-            migrator.apply(migrations, hooks, fake=args.fake)
-    return 0
+            rows = [
+                ("A" if m.id in applied else "U", m.id, m.source_dir or "")
+                for m in migrations
+            ]
 
+        status, ids, sources = zip(*rows, strict=False) if rows else ((), (), ())
 
-def cmd_list(args: argparse.Namespace) -> int:
-    """List migrations and their applied/unapplied status."""
-    collection = _make_collection()
-    migrator = _make_migrator()
-    with migrator:
-        history = migrator.history()
+        if sys.stdout.isatty():
+            status = [
+                f"\033[92m{s}\033[0m" if s == "A" else f"\033[91m{s}\033[0m"
+                for s in status
+            ]
 
-    applied = MigrationsCollection.applied_ids(history)
-    migrations = collection.list()
+        self._write_csv(
+            ("STATUS", "ID", "SOURCE"),
+            list(zip(status, ids, sources, strict=False)),
+        )
+        return 0
 
-    if args.history:
-        rows = [("A", m.id, m.source_dir or "") for m in migrations if m.id in applied]
-    else:
-        rows = [
-            ("A" if m.id in applied else "U", m.id, m.source_dir or "")
-            for m in migrations
-        ]
+    def _rollback(self, args: argparse.Namespace) -> int:
+        """Откатить применённые миграции до ``args.migration_name`` включительно."""
+        with self._migrator:
+            history = self._migrator.history()
+            hooks, migrations = self._collection.to_rollback(
+                history, target=args.migration_name,
+            )
+            if args.plan:
+                self._print_migrations(migrations)
+            else:
+                self._migrator.rollback(migrations, hooks, fake=args.fake)
+        return 0
 
-    status, ids, sources = zip(*rows, strict=False) if rows else ((), (), ())
+    def __call__(self, argv: list[str] | None = None) -> int:
+        """Разобрать ``argv``, настроить логирование и выполнить команду.
 
-    if sys.stdout.isatty():
-        status = [
-            f"\033[92m{s}\033[0m" if s == "A" else f"\033[91m{s}\033[0m" for s in status
-        ]
+        Возвращает код завершения: ``0`` — успех, ``1`` — команда не указана.
+        При :exc:`InvalidArgument` печатает сообщение через ``parser.error``;
+        код выхода — ``2``.
+        """
+        parser = self.build_parser()
+        args = parser.parse_args(argv)
 
-    _write_csv(
-        ("STATUS", "ID", "SOURCE"),
-        list(zip(status, ids, sources, strict=False)),
-    )
-    return 0
+        if not getattr(args, "func", None):
+            parser.print_usage(sys.stderr)
+            return 1
 
+        verbosity = min(max_verbosity, max(min_verbosity, args.verbosity))
+        self._configure_logging(verbosity)
 
-def cmd_rollback(args: argparse.Namespace) -> int:
-    """Rollback applied migrations down to and including ``args.migration_name``."""
-    collection = _make_collection()
-    migrator = _make_migrator()
-    with migrator:
-        history = migrator.history()
-        hooks, migrations = collection.to_rollback(history, target=args.migration_name)
-        if args.plan:
-            _print_migrations(migrations)
-        else:
-            migrator.rollback(migrations, hooks, fake=args.fake)
-    return 0
+        try:
+            return args.func(args)
+        except InvalidArgument as e:
+            parser.error(e.args[0])
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse ``argv`` and dispatch to the requested subcommand."""
-    parser = build_parser()
-    args = parser.parse_args(argv)
-
-    if not getattr(args, "func", None):
-        parser.print_usage(sys.stderr)
-        return 1
-
-    verbosity = min(max_verbosity, max(min_verbosity, args.verbosity))
-    _configure_logging(verbosity)
-
-    try:
-        return args.func(args)
-    except InvalidArgument as e:
-        parser.error(e.args[0])
+    """Разобрать ``argv`` и выполнить выбранную подкоманду."""
+    cli = CLI()
+    return cli(argv)

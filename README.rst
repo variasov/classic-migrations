@@ -244,6 +244,7 @@ classic-migrations
     from classic.migrations import (
         BadConnectionURI,
         BadMigration,
+        CLI,
         InvalidArgument,
         MigrationConflict,
         MigrationLockError,
@@ -279,7 +280,8 @@ classic-migrations
 * ``versions_schema=None`` — схема legacy-таблицы ``versions``.
 
 ``Migrator`` — контекстный менеджер: при входе устанавливает соединение
-и берёт advisory-lock, при выходе закрывает соединение. Методы должны
+и берёт advisory-lock, при выходе снимает его (для SQLite это фиксация
+транзакции лока) и закрывает соединение. Методы должны
 вызываться только внутри ``with``:
 
 * ``history()`` — лог событий таблицы истории (список кортежей
@@ -320,6 +322,38 @@ classic-migrations
         history = db.history()
         hooks, applied = migrations.to_rollback(history)
         db.rollback(applied, hooks)
+
+
+CLI с готовыми коллекцией и мигратором
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+По умолчанию класс ``CLI`` создаёт коллекцию миграций и мигратор из настроек
+окружения (как консольная команда ``migrations``). Если объекты уже собраны
+в коде — например, пути к миграциям и параметры БД приходят из настроек
+приложения, а не из переменных окружения — их можно передать напрямую:
+
+.. code-block:: python
+
+    from classic.migrations import CLI, MigrationsCollection, Migrator
+
+    collection = MigrationsCollection(["./migrations", "./shared/migrations"])
+    migrator = Migrator(
+        driver="sqlite3",
+        db_name="./db.sqlite",
+        migration_table="my_migrations",
+    )
+
+    cli = CLI(collection=collection, migrator=migrator)
+
+    cli(["list"])
+    cli(["apply"])
+    cli(["rollback", "20260822_02_users"])
+
+``CLI(argv)`` разбирает аргументы так же, как консольная команда, и возвращает
+код завершения: ``0`` — успех, ``1`` — команда не указана; при
+``InvalidArgument`` процесс завершается с кодом ``2``. Каждый из аргументов
+``collection`` и ``migrator`` необязателен: отсутствующий объект создаётся
+из настроек окружения.
 
 
 Схема таблицы истории
