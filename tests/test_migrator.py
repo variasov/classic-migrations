@@ -48,6 +48,20 @@ class TestLock:
             backend = _fake_backend(migrator)
             assert backend.locked
         assert not backend.locked
+        assert ("release_lock", None) in backend.oplog
+
+    def test_error_rolls_back_then_releases_lock(self) -> None:
+        migrator = Migrator(driver="fake")
+        backend: FakeBackend | None = None
+        with pytest.raises(RuntimeError, match="boom"), migrator:
+            backend = _fake_backend(migrator)
+            raise RuntimeError("boom")
+        assert backend is not None
+        assert not backend.locked
+        ops = backend.oplog
+        rollback_idx = ops.index(("rollback", None))
+        release_idx = ops.index(("release_lock", None))
+        assert rollback_idx < release_idx
 
     def test_lock_can_be_used_by_methods(self) -> None:
         migrator = Migrator(driver="fake")
@@ -351,6 +365,7 @@ class TestLifecycle:
             backend = _fake_backend(migrator)
             assert backend.locked
         assert not backend.locked
+        assert ("release_lock", None) in backend.oplog
 
     def test_empty_driver_raises(self) -> None:
         with pytest.raises(ValueError):

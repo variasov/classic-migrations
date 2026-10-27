@@ -2,8 +2,10 @@
 Integration test of the public API against a real in-memory SQLite database.
 """
 
+import sqlite3
 from pathlib import Path
 
+import pytest
 from classic.migrations import MigrationsCollection, Migrator
 
 
@@ -172,3 +174,54 @@ class TestPublicApiSqlite:
             assert statuses[0] == "PENDING"
             assert statuses[1] == "APPLIED"
             assert statuses[2] == "ROLLED_BACK"
+
+
+class TestFileDbPersistence:
+    def test_changes_persist_after_context_exit(
+        self, source: Path, tmp_path: Path,
+    ) -> None:
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+        write_file(source / "0002.more.sql", "INSERT INTO foo VALUES (42);\n")
+
+        db_file = tmp_path / "db.sqlite"
+        migrations = MigrationsCollection(str(source))
+
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with db:
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
+
+        db2 = Migrator(driver="sqlite3", db_name=str(db_file))
+        with db2:
+            history = db2.history()
+            assert [row[2] for row in history] == ["APPLIED", "APPLIED"]
+            assert "foo" in db2.backend.list_tables()
+            cursor = db2.backend.execute("SELECT id FROM foo")
+            assert cursor.fetchone()[0] == 42
+
+    def test_error_rolls_back_all_changes(
+        self, source: Path, tmp_path: Path,
+    ) -> None:
+        write_file(
+            source / "0001.bad.sql",
+            "CREATE TABLE foo(id INTEGER);\nNOT VALID SQL;\n",
+        )
+
+        db_file = tmp_path / "db.sqlite"
+        migrations = MigrationsCollection(str(source))
+
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with pytest.raises(sqlite3.OperationalError), db:
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
+
+        con = sqlite3.connect(str(db_file))
+        try:
+            tables = con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'",
+            ).fetchall()
+        finally:
+            con.close()
+        assert tables == []

@@ -96,10 +96,17 @@ class Migrator:
         return self
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
-        """Rollback on error and close the connection."""
-        if exc_type is not None and self._backend is not None:
-            logger.warning("Rolling back transaction after error: %s", exc_value)
-            self._backend.rollback()
+        """Rollback on error, release the lock and close the connection.
+
+        ``release_lock`` commits the open lock transaction on backends where
+        the lock is the transaction itself (SQLite); on the other backends
+        it releases the session-level advisory lock.
+        """
+        if self._backend is not None:
+            if exc_type is not None:
+                logger.warning("Rolling back transaction after error: %s", exc_value)
+                self._backend.rollback()
+            self._backend.release_lock()
         self.close()
 
     def history(self) -> list[tuple[Any, ...]]:
