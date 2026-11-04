@@ -132,7 +132,9 @@ class TestParser:
                 parser.parse_args([command])
 
     def test_unknown_command_exits_with_error(
-        self, cli: CLI, capsys: pytest.CaptureFixture[str],
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         parser = cli.build_parser()
         with pytest.raises(SystemExit) as exc_info:
@@ -143,7 +145,10 @@ class TestParser:
 
 class TestCmdApply:
     def test_calls_to_apply_and_apply(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         result = cli._apply(args)
@@ -153,7 +158,9 @@ class TestCmdApply:
         mock_migrator.apply.assert_called_once_with([], {}, fake=False)
 
     def test_opens_and_closes_migrator_context(
-        self, cli: CLI, mock_migrator: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         cli._apply(args)
@@ -162,7 +169,10 @@ class TestCmdApply:
         mock_migrator.__exit__.assert_called_once()
 
     def test_passes_target_fake(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         cli._apply(args)
@@ -171,7 +181,10 @@ class TestCmdApply:
         mock_migrator.apply.assert_called_once_with([], {}, fake=True)
 
     def test_plan_does_not_apply(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=True)
@@ -184,7 +197,10 @@ class TestCmdApply:
 
 class TestCmdRollback:
     def test_calls_to_rollback_and_rollback(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         result = cli._rollback(args)
@@ -194,7 +210,9 @@ class TestCmdRollback:
         mock_migrator.rollback.assert_called_once_with([], {}, fake=False)
 
     def test_opens_and_closes_migrator_context(
-        self, cli: CLI, mock_migrator: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=False)
         cli._rollback(args)
@@ -203,7 +221,10 @@ class TestCmdRollback:
         mock_migrator.__exit__.assert_called_once()
 
     def test_passes_target_fake(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         cli._rollback(args)
@@ -212,7 +233,10 @@ class TestCmdRollback:
         mock_migrator.rollback.assert_called_once_with([], {}, fake=True)
 
     def test_plan_does_not_rollback(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         args = argparse.Namespace(migration_name=None, fake=False, plan=True)
@@ -225,7 +249,10 @@ class TestCmdRollback:
 
 class TestCmdList:
     def test_calls_list_and_history(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         args = argparse.Namespace(history=False)
         result = cli._list(args)
@@ -235,7 +262,10 @@ class TestCmdList:
         mock_collection.list.assert_called_once()
 
     def test_list_shows_applied_and_unapplied(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_migrator.history.return_value = [
@@ -254,7 +284,10 @@ class TestCmdList:
         assert "U,0002.b" in output
 
     def test_history_flag_shows_only_applied(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_migrator.history.return_value = [
@@ -272,7 +305,10 @@ class TestCmdList:
         assert "0002.b" not in output
 
     def test_rolled_back_migration_is_unapplied(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_migrator.history.return_value = [
@@ -286,7 +322,9 @@ class TestCmdList:
         assert "U,0001.a" in capsys.readouterr().out
 
     def test_empty_list_prints_header_only(
-        self, cli: CLI, capsys: pytest.CaptureFixture[str],
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         args = argparse.Namespace(history=False)
         cli._list(args)
@@ -296,7 +334,10 @@ class TestCmdList:
         assert "0001" not in output
 
     def test_colors_status_on_tty(
-        self, cli: CLI, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         mock_migrator.history.return_value = [
@@ -316,7 +357,9 @@ class TestCmdList:
         assert "\033[91mU\033[0m" in output
 
     def test_prints_source_dir(
-        self, cli: CLI, mock_collection: MagicMock,
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         migration = Migration("0001.a", "/fake/0001.a.sql", source_dir="migrations")
@@ -356,7 +399,9 @@ class TestLogging:
 
 class TestMain:
     def test_main_no_command_returns_1(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         patches = _patch_builders(mock_migrator, mock_collection)
@@ -366,7 +411,9 @@ class TestMain:
         assert "usage" in capsys.readouterr().err
 
     def test_main_apply_returns_0(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         patches = _patch_builders(mock_migrator, mock_collection)
         with patches[0], patches[1]:
@@ -375,7 +422,9 @@ class TestMain:
         mock_migrator.apply.assert_called_once_with([], {}, fake=False)
 
     def test_main_rollback_returns_0(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         patches = _patch_builders(mock_migrator, mock_collection)
         with patches[0], patches[1]:
@@ -384,7 +433,9 @@ class TestMain:
         mock_migrator.rollback.assert_called_once_with([], {}, fake=False)
 
     def test_main_list_returns_0(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         patches = _patch_builders(mock_migrator, mock_collection)
@@ -395,7 +446,9 @@ class TestMain:
         assert "STATUS,ID,SOURCE" in capsys.readouterr().out
 
     def test_main_invalid_argument_exits_2(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_collection.to_apply.side_effect = InvalidArgument("boom")
@@ -406,7 +459,9 @@ class TestMain:
         assert "boom" in capsys.readouterr().err
 
     def test_main_uses_same_migrator_and_collection(
-        self, mock_migrator: MagicMock, mock_collection: MagicMock,
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
     ) -> None:
         patches = _patch_builders(mock_migrator, mock_collection)
         with patches[0], patches[1]:

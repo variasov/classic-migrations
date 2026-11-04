@@ -55,6 +55,7 @@ dev = [
     "psycopg-binary~=3.3",
     "pymysql~=1.2",
     "pymssql~=2.3",
+    "vulture~=2.16",
 ]
 
 [tool.setuptools.packages.find]
@@ -105,6 +106,7 @@ ignore = [
     "N818",     # exception names are part of the public API
     "A002",     # Migration(id=...) is defined by the spec
     "A003",     # MigrationsCollection.list() is defined by the spec
+    "COM812",   # conflicts with the ruff formatter
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -133,4 +135,15 @@ ignore = [
     "FBT",      # apply/rollback take a spec-defined `fake` flag
     "PLR0913",  # connection config takes many explicit kwargs
     "PLR0917",
+]
+
+[tool.vulture]
+paths = ["src", "tests"]
+min_confidence = 60
+ignore_names = [
+    "isolation_level",  # sqlite3.Connection attribute set for autocommit
+    "paramstyle",       # DB-API attribute of the fake driver
+    "pytestmark",       # read by pytest
+    "return_value",     # Mock configuration in tests
+    "side_effect",
 ]

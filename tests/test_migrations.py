@@ -14,8 +14,7 @@ def write_file(path: Path, content: str) -> Path:
 
 def make_history(*applied: str) -> list[tuple[str, str, str]]:
     return [
-        (migration_id, "2020-01-01 00:00:00", "APPLIED")
-        for migration_id in applied
+        (migration_id, "2020-01-01 00:00:00", "APPLIED") for migration_id in applied
     ]
 
 

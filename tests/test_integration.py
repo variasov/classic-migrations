@@ -179,7 +179,9 @@ class TestPublicApiSqlite:
 
 class TestFileDbPersistence:
     def test_changes_persist_after_context_exit(
-        self, source: Path, tmp_path: Path,
+        self,
+        source: Path,
+        tmp_path: Path,
     ) -> None:
         write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
         write_file(source / "0002.more.sql", "INSERT INTO foo VALUES (42);\n")
@@ -202,7 +204,9 @@ class TestFileDbPersistence:
             assert cursor.fetchone()[0] == 42
 
     def test_error_rolls_back_all_changes(
-        self, source: Path, tmp_path: Path,
+        self,
+        source: Path,
+        tmp_path: Path,
     ) -> None:
         write_file(
             source / "0001.bad.sql",

@@ -145,7 +145,8 @@ class TestApply:
         assert events[1][0] == "0001.a"
 
     def test_apply_runs_pre_and_post_hooks(
-        self, source: Path,
+        self,
+        source: Path,
     ) -> None:
         write_file(source / "pre-apply.sql", "SELECT pre;\n")
         write_file(source / "post-apply.sql", "SELECT post;\n")
@@ -168,7 +169,8 @@ class TestApply:
         assert len(cursor_ops) == 3
 
     def test_apply_fake_skips_sql_and_hooks(
-        self, source: Path,
+        self,
+        source: Path,
     ) -> None:
 
         migrator = Migrator(driver="fake")
@@ -265,7 +267,8 @@ class TestRollback:
         assert events[1][0] == "0001.a"
 
     def test_rollback_runs_pre_and_post_hooks(
-        self, source: Path,
+        self,
+        source: Path,
     ) -> None:
 
         migrator = Migrator(driver="fake")
@@ -292,7 +295,8 @@ class TestRollback:
         assert len(cursor_ops) == 3
 
     def test_rollback_fake_skips_sql_and_hooks(
-        self, source: Path,
+        self,
+        source: Path,
     ) -> None:
 
         migrator = Migrator(driver="fake")

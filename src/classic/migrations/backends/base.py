@@ -31,7 +31,6 @@ logger = getLogger("classic.migrations")
 STATUS_PENDING = "PENDING"
 STATUS_APPLIED = "APPLIED"
 STATUS_ROLLED_BACK = "ROLLED_BACK"
-ALL_STATUSES = (STATUS_PENDING, STATUS_APPLIED, STATUS_ROLLED_BACK)
 
 
 def lock_hash(identifier: str) -> int:
@@ -64,7 +63,7 @@ class TransactionManager:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        _traceback: TracebackType | None,
     ) -> bool | None:
         """Commit on success, rollback on error."""
         if exc_type:

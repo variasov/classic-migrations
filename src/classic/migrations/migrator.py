@@ -96,7 +96,7 @@ class Migrator:
         logger.debug("Advisory lock acquired via %s", backend_class.__name__)
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    def __exit__(self, exc_type: object, exc_value: object, _traceback: object) -> None:
         """Rollback on error, release the lock and close the connection.
 
         ``release_lock`` commits the open lock transaction on backends where

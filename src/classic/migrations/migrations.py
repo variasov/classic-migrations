@@ -123,8 +123,7 @@ class Migration:
             self.transactional = transactional_raw.lower() == "true"
         else:
             raise exceptions.BadMigration(
-                f"Invalid transactional directive {transactional_raw!r} "
-                f"in {self.path}",
+                f"Invalid transactional directive {transactional_raw!r} in {self.path}",
             )
 
         self._load_rollback_directives(rb_directives)

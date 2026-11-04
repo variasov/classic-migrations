@@ -99,7 +99,9 @@ class CLI:
         p.set_defaults(func=self._list)
 
         p = subparsers.add_parser(
-            "rollback", parents=[common], help="Rollback migrations",
+            "rollback",
+            parents=[common],
+            help="Rollback migrations",
         )
         p.add_argument(
             "migration_name",
@@ -167,7 +169,8 @@ class CLI:
         with self._migrator:
             history = self._migrator.history()
             hooks, migrations = self._collection.to_apply(
-                history, target=args.migration_name,
+                history,
+                target=args.migration_name,
             )
             if args.plan:
                 self._print_migrations(migrations)
@@ -212,7 +215,8 @@ class CLI:
         with self._migrator:
             history = self._migrator.history()
             hooks, migrations = self._collection.to_rollback(
-                history, target=args.migration_name,
+                history,
+                target=args.migration_name,
             )
             if args.plan:
                 self._print_migrations(migrations)
