@@ -31,9 +31,15 @@ def _utcnow_str() -> str:
 
 
 class SQLiteBackend(Backend, driver=sqlite3):
-    """SQLite migration backend using the standard ``sqlite3`` driver."""
+    """SQLite migration backend using the standard ``sqlite3`` driver.
+
+    The main connection works in autocommit; transactions are opened
+    explicitly by :class:`TransactionManager`.
+    """
 
     transactional_ddl = True
+
+    _lock_connection: sqlite3.Connection | None = None
 
     def connect(self) -> sqlite3.Connection:
         """Open a shared-cache SQLite connection with autocommit."""
@@ -82,25 +88,53 @@ class SQLiteBackend(Backend, driver=sqlite3):
             (migration_id, _utcnow_str(), status),
         )
 
+    def _lock_path(self) -> str | None:
+        """Return the companion lock file path, or ``None`` if locking is off."""
+        if not self.db_name or self.db_name == ":memory:":
+            return None
+        return f"{self.db_name}.{self.migration_table}.lock"
+
     def acquire_lock(self) -> None:
-        """Acquire the SQLite write lock."""
+        """Acquire an inter-process lock via a companion lock file.
+
+        A separate connection to ``<db_name>.<migration_table>.lock`` runs
+        ``BEGIN IMMEDIATE`` with ``timeout=0``, so a concurrent migrator
+        fails immediately with :class:`MigrationLockError`. The main
+        database is not locked and the main connection stays in autocommit:
+        each transactional migration opens its own transaction, while
+        non-transactional migrations and hooks run outside transactions.
+
+        An in-memory database lives in a single process, so no lock is
+        taken for it.
+        """
+        path = self._lock_path()
+        if path is None:
+            return
+        conn = self.driver.connect(path, timeout=0)
+        conn.isolation_level = None
         try:
-            self.begin_immediate()
+            conn.execute("BEGIN IMMEDIATE")
         except self.DatabaseError as e:
+            conn.close()
             raise MigrationLockError(
                 "Could not acquire advisory lock on the database",
             ) from e
+        self._lock_connection = conn
 
     def release_lock(self) -> None:
-        """Release the SQLite write lock."""
-        self.commit()
+        """Release the lock by closing the lock connection (no-op if not held).
 
-    def begin_immediate(self) -> None:
-        """Begin an immediate write transaction."""
-        if self._in_transaction:
-            raise RuntimeError("already in a transaction")
-        self._in_transaction = True
-        self.execute("BEGIN IMMEDIATE")
+        The lock file is intentionally left on disk: deleting it would race
+        with another process that has just opened it to take the lock.
+        """
+        conn = self._lock_connection
+        if conn is None:
+            return
+        self._lock_connection = None
+        try:
+            conn.rollback()
+        finally:
+            conn.close()
 
     @contextmanager
     def disable_transactions(self) -> Generator[None]:

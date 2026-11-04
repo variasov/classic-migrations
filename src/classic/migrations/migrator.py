@@ -103,9 +103,8 @@ class Migrator:
     def __exit__(self, exc_type: object, exc_value: object, _traceback: object) -> None:
         """Rollback on error, release the lock and close the connection.
 
-        ``release_lock`` commits the open lock transaction on backends where
-        the lock is the transaction itself (SQLite); on the other backends
-        it releases the session-level advisory lock.
+        ``release_lock`` releases the advisory lock (a session-level lock,
+        or a companion lock file on SQLite); it does not commit anything.
         """
         if self._backend is not None:
             if exc_type is not None:

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from classic.migrations.backends.sqlite3 import SQLiteBackend
+from classic.migrations.exceptions import MigrationLockError
 
 
 @pytest.fixture
@@ -115,22 +116,105 @@ def test_copy_versions(tmp_path: Path) -> None:
         b.close()
 
 
-def test_lock_holds_write_transaction(backend: SQLiteBackend) -> None:
+def test_lock_memory_is_noop(backend: SQLiteBackend) -> None:
     backend._create_migration_table()
+    backend.acquire_lock()
     backend.acquire_lock()
     backend.mark("0001.init", "APPLIED")
     backend.release_lock()
-    history = backend._migration_history()
-    assert len(history) == 1
+    assert len(backend._migration_history()) == 1
 
 
-def test_lock_rollback_on_exception(backend: SQLiteBackend) -> None:
-    backend._create_migration_table()
-    backend.acquire_lock()
-    backend.mark("0001.init", "APPLIED")
-    backend.rollback()
-    history = backend._migration_history()
-    assert len(history) == 0
+def test_release_lock_without_acquire_is_noop(tmp_path: Path) -> None:
+    b = SQLiteBackend(db_name=str(tmp_path / "db.sqlite"))
+    try:
+        b.release_lock()
+    finally:
+        b.close()
+
+
+def test_lock_does_not_open_transaction(tmp_path: Path) -> None:
+    b = SQLiteBackend(db_name=str(tmp_path / "db.sqlite"))
+    try:
+        b.acquire_lock()
+        assert not b.in_transaction
+        assert not b.connection.in_transaction
+        b.release_lock()
+    finally:
+        b.close()
+
+
+def test_lock_uses_companion_file(tmp_path: Path) -> None:
+    db_file = tmp_path / "db.sqlite"
+    b = SQLiteBackend(db_name=str(db_file), migration_table="hist")
+    try:
+        b.acquire_lock()
+        assert (tmp_path / "db.sqlite.hist.lock").exists()
+        b.release_lock()
+    finally:
+        b.close()
+
+
+def test_lock_second_backend_fails_immediately(tmp_path: Path) -> None:
+    db_file = str(tmp_path / "db.sqlite")
+    first = SQLiteBackend(db_name=db_file)
+    second = SQLiteBackend(db_name=db_file)
+    try:
+        first.acquire_lock()
+        with pytest.raises(MigrationLockError):
+            second.acquire_lock()
+        first.release_lock()
+        second.acquire_lock()
+        second.release_lock()
+    finally:
+        first.close()
+        second.close()
+
+
+def test_lock_does_not_block_other_connections(tmp_path: Path) -> None:
+    db_file = str(tmp_path / "db.sqlite")
+    b = SQLiteBackend(db_name=db_file)
+    other = sqlite3.connect(db_file, timeout=0)
+    try:
+        b.ensure_migration_table()
+        b.acquire_lock()
+        other.execute("CREATE TABLE t(id INTEGER)")
+        other.execute("INSERT INTO t VALUES (1)")
+        other.commit()
+        assert other.execute("SELECT COUNT(*) FROM migrations").fetchone()[0] == 0
+        b.release_lock()
+    finally:
+        other.close()
+        b.close()
+
+
+def test_commit_and_rollback_in_autocommit_mode(tmp_path: Path) -> None:
+    db_file = str(tmp_path / "db.sqlite")
+    b = SQLiteBackend(db_name=db_file)
+    other = sqlite3.connect(db_file, timeout=0)
+    try:
+        b._create_migration_table()
+        b.begin()
+        b.mark("0001.a", "APPLIED")
+        b.rollback()
+        assert b._migration_history() == []
+        b.begin()
+        b.mark("0001.a", "APPLIED")
+        b.commit()
+        assert other.execute("SELECT COUNT(*) FROM migrations").fetchone()[0] == 1
+    finally:
+        other.close()
+        b.close()
+
+
+def test_vacuum_outside_transaction(tmp_path: Path) -> None:
+    b = SQLiteBackend(db_name=str(tmp_path / "db.sqlite"))
+    try:
+        b.acquire_lock()
+        b.execute("VACUUM")
+        b.release_lock()
+    finally:
+        b.close()
 
 
 def test_transaction_commit(backend: SQLiteBackend) -> None:
