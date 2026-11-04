@@ -14,10 +14,14 @@
 
 """The :class:`Migrator` that executes migrations through a backend."""
 
+import sys
 from logging import getLogger
 from typing import Any
 
-from typing_extensions import Self
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from classic.migrations.backends.base import (
     STATUS_APPLIED,

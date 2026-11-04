@@ -16,13 +16,17 @@
 """Base classes for database backends and transaction management."""
 
 import hashlib
+import sys
 from collections.abc import Generator
 from contextlib import contextmanager
 from logging import getLogger
 from types import TracebackType
 from typing import Any, ClassVar
 
-from typing_extensions import Self
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from classic.migrations.exceptions import BadConnectionURI
 
