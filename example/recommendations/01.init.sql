@@ -1,3 +1,0 @@
-CREATE TABLE test(
-    ID SERIAL PRIMARY KEY
-);
