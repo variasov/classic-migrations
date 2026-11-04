@@ -1,12 +1,44 @@
----
-name: Tests
+name: Checks
 
 on:  # yamllint disable-line rule:truthy
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python 3.14
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --group dev --python 3.14
+
+      - name: Ruff check
+        run: uv run ruff check
+
+      - name: Ruff format check
+        run: uv run ruff format --check
+
+      - name: Pyright
+        run: uv run pyright
+
+      - name: Vulture
+        run: uv run vulture
 
   test-sqlite:
     name: SQLite / Python ${{ matrix.python-version }}
@@ -23,6 +55,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -31,10 +65,10 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run pytest tests/ -v
+        run: uv run pytest -v
 
 
   test-postgresql:
@@ -74,6 +108,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -82,7 +118,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run pytest tests/backends/test_psycopg.py -v
@@ -126,6 +162,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -134,7 +172,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run pytest tests/backends/test_mysql.py -v
@@ -179,6 +217,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -187,7 +227,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run pytest tests/backends/test_pymssql.py -v
@@ -234,6 +274,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -242,7 +284,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Grant DBMS_LOCK to app user
         run: |
@@ -252,3 +294,35 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/backends/test_oracle.py -v
+
+
+  # Single status check for branch protection: require "All checks" on main
+  # instead of listing every matrix job. Oracle is allowed to fail.
+  all-checks:
+    name: All checks
+    if: always()
+    needs:
+      - lint
+      - test-sqlite
+      - test-postgresql
+      - test-mysql
+      - test-mssql
+      - test-oracle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fail if a required job did not succeed
+        env:
+          RESULTS: >-
+            ${{ needs.lint.result }}
+            ${{ needs.test-sqlite.result }}
+            ${{ needs.test-postgresql.result }}
+            ${{ needs.test-mysql.result }}
+            ${{ needs.test-mssql.result }}
+        run: |
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "Required job result: $result"
+              exit 1
+            fi
+          done
