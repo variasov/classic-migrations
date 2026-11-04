@@ -22,8 +22,9 @@ from logging import getLogger
 from types import TracebackType
 from typing import Any, ClassVar
 
-from classic.migrations.exceptions import BadConnectionURI
 from typing_extensions import Self
+
+from classic.migrations.exceptions import BadConnectionURI
 
 logger = getLogger("classic.migrations")
 

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pymssql
 import pytest
+
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.pymssql import PyMSSQLBackend
-
 from tests.conftest import get_credentials
 
 _env = get_credentials("MS_SQL_")

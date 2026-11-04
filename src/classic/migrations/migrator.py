@@ -17,6 +17,8 @@
 from logging import getLogger
 from typing import Any
 
+from typing_extensions import Self
+
 from classic.migrations.backends.base import (
     STATUS_APPLIED,
     STATUS_PENDING,
@@ -24,7 +26,6 @@ from classic.migrations.backends.base import (
     Backend,
 )
 from classic.migrations.migrations import Hook, Migration
-from typing_extensions import Self
 
 logger = getLogger("classic.migrations")
 

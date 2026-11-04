@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 
 import pytest
-from classic.migrations.backends.base import Backend
 
+from classic.migrations.backends.base import Backend
 from tests.backends.fake import FakeBackend
 
 Backend.implementations["fake"] = FakeBackend

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import psycopg
 import pytest
+
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.psycopg import PsycopgBackend
-
 from tests.conftest import get_credentials
 
 _env = get_credentials("PG_")

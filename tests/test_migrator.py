@@ -2,9 +2,9 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+
 from classic.migrations.migrations import Hook, Migration
 from classic.migrations.migrator import Migrator
-
 from tests.backends.fake import FakeBackend
 
 

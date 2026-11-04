@@ -57,14 +57,15 @@ dev = [
     "pymssql~=2.3",
 ]
 
-[tool.setuptools]
-package-dir = { "" = "sources" }
-
 [tool.setuptools.packages.find]
-where = ["sources"]
+where = ["src"]
 namespaces = true
 
+[tool.setuptools.package-data]
+"classic.migrations" = ["py.typed"]
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 addopts = "--cov=classic --cov-report=term-missing"
 
 [tool.coverage.run]
@@ -75,12 +76,11 @@ branch = true
 show_missing = true
 
 [tool.pyright]
-include = ["sources", "tests"]
+include = ["src", "tests"]
 exclude = [
     "**/__pycache__",
     "**/.pytest_cache",
     ".venv",
-    "sources/classic/migrations/backends/contrib",
 ]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = "none"
@@ -92,9 +92,6 @@ extraPaths = ["."]
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = [
-    "sources/classic/migrations/backends/contrib",
-]
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -125,14 +122,14 @@ ignore = [
     "CPY001",   # tests do not carry copyright headers
     "S608",     # SQL strings in tests are not injection vectors
 ]
-"sources/classic/migrations/backends/*.py" = [
+"src/classic/migrations/backends/*.py" = [
     "S608",     # identifier interpolation is quoted and intentional
 ]
-"sources/classic/migrations/backends/base.py" = [
+"src/classic/migrations/backends/base.py" = [
     "PLR0913",  # connection config takes many explicit kwargs
     "PLR0917",
 ]
-"sources/classic/migrations/migrator.py" = [
+"src/classic/migrations/migrator.py" = [
     "FBT",      # apply/rollback take a spec-defined `fake` flag
     "PLR0913",  # connection config takes many explicit kwargs
     "PLR0917",

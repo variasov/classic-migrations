@@ -4,9 +4,9 @@ from pathlib import Path
 
 import oracledb
 import pytest
+
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.oracle import OracleBackend
-
 from tests.conftest import get_credentials
 
 _env = get_credentials("ORACLE_")

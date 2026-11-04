@@ -2,8 +2,8 @@ from collections.abc import Generator
 
 import pymysql
 import pytest
-from classic.migrations.backends.pymysql import PyMySQLBackend
 
+from classic.migrations.backends.pymysql import PyMySQLBackend
 from tests.conftest import get_credentials
 
 _env = get_credentials("MYSQL_")

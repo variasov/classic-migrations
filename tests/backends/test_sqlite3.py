@@ -3,6 +3,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+
 from classic.migrations.backends.sqlite3 import SQLiteBackend
 
 

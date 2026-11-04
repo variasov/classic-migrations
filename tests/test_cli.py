@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from classic.migrations.cli import CLI, main, verbosity_levels
 from classic.migrations.exceptions import InvalidArgument
 from classic.migrations.migrations import Migration

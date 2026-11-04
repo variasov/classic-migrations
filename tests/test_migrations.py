@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+
 from classic.migrations import MigrationsCollection, exceptions
 from classic.migrations.migrations import Migration
 

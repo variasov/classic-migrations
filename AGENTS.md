@@ -20,14 +20,14 @@
 Зависимости и окружение — через `uv` (`uv.lock` в корне), группа зависимостей
 `dev` (содержит pytest, pytest-cov, ruff, pyright, драйверы СУБД).
 
-Проект собирается из `sources/` (корневой `pyproject.toml`,
-`package-dir = {"" = "sources"}`), точка входа
+Проект собирается из `src/` (корневой `pyproject.toml`,
+`[tool.setuptools.packages.find] where = ["src"]`), точка входа
 `migrations = classic.migrations.cli:main`.
 
 Проверка изменений выполняется командами:
 
 ```powershell
-uv run ruff check sources/ tests/
+uv run ruff check src/ tests/
 uv run pyright
 uv run pytest
 ```
@@ -40,7 +40,7 @@ uv run pytest
 ## Структура
 
 ```
-sources/classic/migrations/
+src/classic/migrations/
     __init__.py                        # публичный API: MigrationsCollection, Migrator, исключения, __version__
     migrations.py                      # MigrationsCollection + Migration/Hook + чтение/парсинг SQL
     migrator.py                        # Migrator: lock/history/apply/rollback, БЕЗ SQL

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import oracledb
+
 from classic.migrations.backends.base import Backend, lock_hash
 from classic.migrations.exceptions import MigrationLockError
 

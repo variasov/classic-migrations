@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+
 from classic.migrations.backends.base import Backend, lock_hash
 
 

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import sqlparse
+
 from classic.migrations import exceptions
 
 if TYPE_CHECKING:

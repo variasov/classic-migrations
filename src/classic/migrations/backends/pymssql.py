@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pymssql
+
 from classic.migrations.backends.base import Backend
 from classic.migrations.exceptions import MigrationLockError
 
