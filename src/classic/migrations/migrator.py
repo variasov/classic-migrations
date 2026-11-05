@@ -127,7 +127,7 @@ class Migrator:
         failed = exc_type is not None
         try:
             if failed:
-                logger.warning("Rolling back transaction after error: %s", exc_value)
+                logger.debug("Rolling back transaction after error: %s", exc_value)
                 try:
                     backend.rollback()
                 except Exception:

@@ -19,9 +19,20 @@ import argparse
 import csv
 import logging
 import sys
+import traceback
 from typing import Any
 
-from classic.migrations.exceptions import InvalidArgument
+from classic.migrations.backends.base import Backend
+from classic.migrations.exceptions import (
+    BadConnectionURI,
+    BadMigration,
+    InvalidArgument,
+    MigrationConflict,
+    MigrationLockError,
+    MigrationPending,
+    MissingSource,
+    NoMigration,
+)
 from classic.migrations.migrations import MigrationsCollection
 from classic.migrations.migrator import Migrator
 from classic.migrations.settings import Settings
@@ -36,11 +47,36 @@ min_verbosity = min(verbosity_levels)
 max_verbosity = max(verbosity_levels)
 
 
+_LIBRARY_ERRORS = (
+    BadConnectionURI,
+    BadMigration,
+    MigrationConflict,
+    NoMigration,
+    MigrationLockError,
+    MigrationPending,
+    MissingSource,
+)
+
+
+class _ConfigError(Exception):
+    """Ошибка конфигурации (переменные окружения); используется только в CLI."""
+
+
+def _is_driver_error(error: BaseException) -> bool:
+    """Вернуть True, если ``error`` — ошибка одного из зарегистрированных драйверов."""
+    for impl in Backend.implementations.values():
+        driver = impl.driver
+        error_type = getattr(driver, "Error", driver.DatabaseError)
+        if isinstance(error, error_type):
+            return True
+    return False
+
+
 class CLI:
     """Класс, запускающий миграции при запуске из CLI."""
 
-    _collection: MigrationsCollection
-    _migrator: Migrator
+    _collection: MigrationsCollection | None
+    _migrator: Migrator | None
 
     def __init__(
         self,
@@ -49,11 +85,26 @@ class CLI:
     ) -> None:
         """Инициализировать CLI.
 
-        Если ``collection`` или ``migrator`` не переданы, они создаются
-        из настроек окружения (:class:`Settings`).
+        Если ``collection`` или ``migrator`` не переданы, они лениво
+        создаются при первом обращении из настроек окружения
+        (:class:`Settings`), поэтому ``--help`` работает без настроек.
         """
-        self._collection = collection or self._make_collection()
-        self._migrator = migrator or self._make_migrator()
+        self._collection = collection
+        self._migrator = migrator
+
+    @property
+    def collection(self) -> MigrationsCollection:
+        """Вернуть коллекцию миграций, создав её при первом обращении."""
+        if self._collection is None:
+            self._collection = self._make_collection()
+        return self._collection
+
+    @property
+    def migrator(self) -> Migrator:
+        """Вернуть мигратор; при первом обращении он создаётся из настроек."""
+        if self._migrator is None:
+            self._migrator = self._make_migrator()
+        return self._migrator
 
     def build_parser(self) -> argparse.ArgumentParser:
         """Собрать и вернуть парсер аргументов командной строки."""
@@ -127,15 +178,24 @@ class CLI:
     def _make_collection(self) -> MigrationsCollection:
         """Создать коллекцию миграций из каталогов-источников из настроек."""
         settings = Settings()
-        return MigrationsCollection(sources=settings.sources_list)
+        sources = settings.sources_list
+        if not sources:
+            raise _ConfigError("SOURCES is not set")
+        return MigrationsCollection(sources=sources)
 
     def _make_migrator(self) -> Migrator:
         """Создать мигратор на основе настроек окружения."""
         settings = Settings()
+        if not settings.DATABASE_DRIVER:
+            raise _ConfigError("DATABASE_DRIVER is not set")
+        try:
+            port = settings.DATABASE_PORT
+        except ValueError as e:
+            raise _ConfigError(f"DATABASE_PORT must be an integer ({e})") from e
         return Migrator(
             driver=settings.DATABASE_DRIVER,
             db_host=settings.DATABASE_HOST,
-            db_port=settings.DATABASE_PORT,
+            db_port=port,
             db_name=settings.DATABASE_NAME,
             db_user=settings.DATABASE_USER,
             db_pass=settings.DATABASE_PASSWORD,
@@ -166,9 +226,11 @@ class CLI:
 
     def _apply(self, args: argparse.Namespace) -> int:
         """Применить ожидающие миграции до ``args.migration_name`` включительно."""
-        with self._migrator:
-            history = self._migrator.history()
-            hooks, migrations = self._collection.to_apply(
+        collection = self.collection
+        migrator = self.migrator
+        with migrator:
+            history = migrator.history()
+            hooks, migrations = collection.to_apply(
                 history,
                 target=args.migration_name,
                 fake=args.fake,
@@ -176,7 +238,7 @@ class CLI:
             if args.plan:
                 self._print_migrations(migrations)
             else:
-                self._migrator.apply(migrations, hooks, fake=args.fake)
+                migrator.apply(migrations, hooks, fake=args.fake)
         return 0
 
     def _list(self, args: argparse.Namespace) -> int:
@@ -186,11 +248,13 @@ class CLI:
         U — не применена. При ``--history`` выводятся только A и P, то есть
         миграции, которые затронули базу.
         """
-        with self._migrator:
-            history = self._migrator.history()
+        collection = self.collection
+        migrator = self.migrator
+        with migrator:
+            history = migrator.history()
 
         statuses = MigrationsCollection.statuses(history)
-        migrations = self._collection.list()
+        migrations = collection.list()
 
         def letter(migration_id: str) -> str:
             status = statuses.get(migration_id)
@@ -219,9 +283,11 @@ class CLI:
 
     def _rollback(self, args: argparse.Namespace) -> int:
         """Откатить применённые миграции до ``args.migration_name`` включительно."""
-        with self._migrator:
-            history = self._migrator.history()
-            hooks, migrations = self._collection.to_rollback(
+        collection = self.collection
+        migrator = self.migrator
+        with migrator:
+            history = migrator.history()
+            hooks, migrations = collection.to_rollback(
                 history,
                 target=args.migration_name,
                 fake=args.fake,
@@ -229,15 +295,21 @@ class CLI:
             if args.plan:
                 self._print_migrations(migrations)
             else:
-                self._migrator.rollback(migrations, hooks, fake=args.fake)
+                migrator.rollback(migrations, hooks, fake=args.fake)
         return 0
 
     def __call__(self, argv: list[str] | None = None) -> int:
         """Разобрать ``argv``, настроить логирование и выполнить команду.
 
-        Возвращает код завершения: ``0`` — успех, ``1`` — команда не указана.
-        При :exc:`InvalidArgument` печатает сообщение через ``parser.error``;
-        код выхода — ``2``.
+        Возвращает код завершения: ``0`` — успех, ``1`` — ошибка или команда
+        не указана, ``2`` — неверные аргументы (:exc:`InvalidArgument` и ошибки
+        парсера; сообщение печатается через ``parser.error``).
+
+        Ошибки конфигурации, исключения библиотеки и ошибки драйверов БД
+        печатаются в stderr одной строкой ``error: ...`` (для ошибок драйвера
+        — ``error: <ИмяКласса>: <сообщение>``) и дают код ``1``; при ``-vv``
+        перед ней печатается полный traceback. Прочие исключения (ошибки в
+        коде) не перехватываются.
         """
         parser = self.build_parser()
         args = parser.parse_args(argv)
@@ -253,6 +325,17 @@ class CLI:
             return args.func(args)
         except InvalidArgument as e:
             parser.error(e.args[0])
+        except Exception as e:
+            is_driver_error = _is_driver_error(e)
+            if not (is_driver_error or isinstance(e, (_ConfigError, *_LIBRARY_ERRORS))):
+                raise
+            if verbosity >= max_verbosity:
+                traceback.print_exc()
+            message = str(e) or type(e).__name__
+            if is_driver_error:
+                message = f"{type(e).__name__}: {message}"
+            sys.stderr.write(f"error: {message}\n")
+            return 1
 
 
 def main(argv: list[str] | None = None) -> int:

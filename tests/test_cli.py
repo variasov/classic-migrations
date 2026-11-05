@@ -1,15 +1,27 @@
 import argparse
 import io
 import logging
+import sqlite3
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from classic.migrations.cli import CLI, main, verbosity_levels
-from classic.migrations.exceptions import InvalidArgument
+from classic.migrations.exceptions import (
+    BadConnectionURI,
+    BadMigration,
+    InvalidArgument,
+    MigrationConflict,
+    MigrationLockError,
+    MigrationPending,
+    MissingSource,
+    NoMigration,
+)
 from classic.migrations.migrations import Migration
+from tests.backends.fake import FakeDatabaseError
 
 if TYPE_CHECKING:
     from classic.migrations.migrations import MigrationsCollection
@@ -558,3 +570,271 @@ class TestMain:
         with patches[0], patches[1]:
             main(["apply"])
         mock_migrator.history.assert_called_once()
+
+
+@pytest.fixture
+def empty_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Окружение без настроек и без .env в текущем каталоге."""
+    for name in (
+        "SOURCES",
+        "DATABASE_DRIVER",
+        "DATABASE_PORT",
+        "DATABASE_NAME",
+        "DATABASE_HOST",
+        "DATABASE_USER",
+        "DATABASE_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    return tmp_path
+
+
+class TestLazyCreation:
+    def test_constructor_does_not_build(self, empty_env: Path) -> None:
+        CLI()
+
+    def test_constructor_does_not_call_builders(self) -> None:
+        with (
+            patch.object(CLI, "_make_collection", side_effect=AssertionError),
+            patch.object(CLI, "_make_migrator", side_effect=AssertionError),
+        ):
+            CLI()
+
+    def test_help_works_in_empty_env(
+        self,
+        empty_env: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with (
+            patch.object(CLI, "_make_collection", side_effect=AssertionError),
+            patch.object(CLI, "_make_migrator", side_effect=AssertionError),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main(["--help"])
+        assert exc_info.value.code == 0
+        assert "usage" in capsys.readouterr().out
+
+    def test_no_command_in_empty_env_returns_1(
+        self,
+        empty_env: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with (
+            patch.object(CLI, "_make_collection", side_effect=AssertionError),
+            patch.object(CLI, "_make_migrator", side_effect=AssertionError),
+        ):
+            assert main([]) == 1
+        assert "usage" in capsys.readouterr().err
+
+    def test_unknown_command_in_empty_env_exits_2(self, empty_env: Path) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["nope"])
+        assert exc_info.value.code == 2
+
+    def test_builders_cache_result(
+        self,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+    ) -> None:
+        cli = CLI()
+        with (
+            patch.object(
+                CLI, "_make_migrator", return_value=mock_migrator
+            ) as make_migrator,
+            patch.object(
+                CLI, "_make_collection", return_value=mock_collection
+            ) as make_collection,
+        ):
+            assert cli.migrator is mock_migrator
+            assert cli.migrator is mock_migrator
+            assert cli.collection is mock_collection
+            assert cli.collection is mock_collection
+        make_migrator.assert_called_once()
+        make_collection.assert_called_once()
+
+    @pytest.mark.parametrize("command", ["apply", "list", "rollback"])
+    def test_collection_built_before_migrator(
+        self,
+        empty_env: Path,
+        command: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch.object(CLI, "_make_migrator") as make_migrator:
+            result = main([command])
+        assert result == 1
+        make_migrator.assert_not_called()
+        assert capsys.readouterr().err == "error: SOURCES is not set\n"
+
+
+class TestConfigErrors:
+    def test_sources_not_set(
+        self,
+        empty_env: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert main(["apply"]) == 1
+        err = capsys.readouterr().err
+        assert "error: SOURCES is not set" in err
+        assert "Traceback" not in err
+
+    def test_driver_not_set(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SOURCES", str(empty_env))
+        assert main(["apply"]) == 1
+        assert capsys.readouterr().err == "error: DATABASE_DRIVER is not set\n"
+
+    def test_port_not_integer(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SOURCES", str(empty_env))
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        monkeypatch.setenv("DATABASE_PORT", "abc")
+        assert main(["apply"]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("error: DATABASE_PORT must be an integer")
+        assert "abc" in err
+        assert "Traceback" not in err
+
+
+class TestErrorHandling:
+    @pytest.mark.parametrize(
+        "error_class",
+        [
+            BadConnectionURI,
+            BadMigration,
+            MigrationConflict,
+            NoMigration,
+            MigrationLockError,
+            MigrationPending,
+            MissingSource,
+        ],
+    )
+    @pytest.mark.parametrize("command", ["apply", "rollback"])
+    def test_library_error_from_collection(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+        error_class: type[Exception],
+        command: str,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        if command == "apply":
+            method = mock_collection.to_apply
+        else:
+            method = mock_collection.to_rollback
+        method.side_effect = error_class("Migration 'x' not found")
+
+        assert cli([command]) == 1
+        captured = capsys.readouterr()
+        assert captured.err == "error: Migration 'x' not found\n"
+        assert "Traceback" not in captured.err
+
+    @pytest.mark.parametrize("error_class", [MigrationLockError, MissingSource])
+    def test_library_error_from_list(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+        error_class: type[Exception],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_collection.list.side_effect = error_class("boom")
+        assert cli(["list"]) == 1
+        assert capsys.readouterr().err == "error: boom\n"
+
+    def test_library_error_from_migrator_enter(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.__enter__.side_effect = MigrationLockError("locked")
+        assert cli(["apply"]) == 1
+        assert capsys.readouterr().err == "error: locked\n"
+
+    def test_empty_message_uses_class_name(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_collection.to_apply.side_effect = NoMigration()
+        assert cli(["apply"]) == 1
+        assert capsys.readouterr().err == "error: NoMigration\n"
+
+    def test_sqlite_driver_error(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.history.side_effect = sqlite3.OperationalError("no such table: t")
+        assert cli(["list"]) == 1
+        assert capsys.readouterr().err == "error: OperationalError: no such table: t\n"
+
+    def test_fake_driver_error(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.apply.side_effect = FakeDatabaseError("bad")
+        assert cli(["apply"]) == 1
+        assert capsys.readouterr().err == "error: FakeDatabaseError: bad\n"
+
+    def test_vv_prints_traceback(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_collection.to_apply.side_effect = NoMigration("nope")
+        assert cli(["apply", "-vv"]) == 1
+        err = capsys.readouterr().err
+        assert "Traceback" in err
+        assert err.rstrip("\n").endswith("error: nope")
+
+    def test_v_does_not_print_traceback(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_collection.to_apply.side_effect = NoMigration("nope")
+        assert cli(["apply", "-v"]) == 1
+        assert "Traceback" not in capsys.readouterr().err
+
+    def test_unknown_exception_propagates(
+        self,
+        cli: CLI,
+        mock_collection: MagicMock,
+    ) -> None:
+        mock_collection.to_apply.side_effect = RuntimeError("bug")
+        with pytest.raises(RuntimeError, match="bug"):
+            cli(["apply"])
+
+    def test_end_to_end_unknown_target(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        source = empty_env / "migrations"
+        source.mkdir()
+        (source / "0001.init.sql").write_text(
+            "CREATE TABLE t(id INTEGER);\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("SOURCES", str(source))
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        monkeypatch.setenv("DATABASE_NAME", str(empty_env / "db.sqlite"))
+
+        assert main(["apply", "nonexistent"]) == 1
+        err = capsys.readouterr().err
+        assert err == "error: Migration 'nonexistent' not found\n"
+        assert "Traceback" not in err

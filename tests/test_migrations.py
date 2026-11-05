@@ -102,7 +102,7 @@ class TestList:
         write_file(sub / "0001.init.sql", "CREATE TABLE b(id INTEGER);\n")
         collection = MigrationsCollection(sources=[str(source), str(sub)])
 
-        with pytest.raises(exceptions.MigrationConflict):
+        with pytest.raises(exceptions.MigrationConflict, match=r"0001\.init"):
             collection.list()
 
     def test_list_missing_dependency_raises(self, source: Path) -> None:

@@ -281,7 +281,10 @@ class MigrationsCollection:
                 if basename in HOOK_NAMES:
                     continue
                 if basename in migrations:
-                    raise exceptions.MigrationConflict(basename)
+                    raise exceptions.MigrationConflict(
+                        f"Duplicate migration id {basename!r} in "
+                        f"{migrations[basename].path} and {filename}"
+                    )
                 migrations[basename] = Migration(
                     basename,
                     str(filename),
