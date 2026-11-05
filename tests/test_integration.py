@@ -117,6 +117,28 @@ class TestPublicApiSqlite:
             assert "a" in tables
             assert "b" not in tables
 
+    def test_apply_target_with_dependencies_skips_independent(
+        self,
+        source: Path,
+    ) -> None:
+        write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")
+        write_file(source / "0002.b.sql", "CREATE TABLE b(id INTEGER);\n")
+        write_file(
+            source / "0003.c.sql",
+            "-- depends: 0001.a\nCREATE TABLE c(id INTEGER);\n",
+        )
+
+        db = Migrator(driver="sqlite3", db_name=":memory:")
+        migrations = MigrationsCollection(str(source))
+
+        with db:
+            hooks, unapplied = migrations.to_apply(db.history(), target="0003.c")
+            db.apply(unapplied, hooks)
+
+            tables = db.backend.list_tables()
+            assert {"a", "c"} <= set(tables)
+            assert "b" not in tables
+
     def test_hooks_run(self, source: Path) -> None:
         write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
         write_file(source / "pre-apply.sql", "CREATE TABLE pre_hook(id INTEGER);\n")

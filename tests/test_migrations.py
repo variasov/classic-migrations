@@ -18,6 +18,13 @@ def make_history(*applied: str) -> list[tuple[str, str, str]]:
     ]
 
 
+def write_graph(source: Path, graph: dict[str, str]) -> None:
+    """Write migrations; ``graph`` maps id to a comma-separated depends list."""
+    for migration_id, depends in graph.items():
+        header = f"-- depends: {depends}\n" if depends else ""
+        write_file(source / f"{migration_id}.sql", header + "SELECT 1;\n")
+
+
 class TestList:
     def test_list_returns_topologically_sorted(self, source: Path) -> None:
         write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
@@ -30,6 +37,42 @@ class TestList:
         migrations = collection.list()
 
         assert [m.id for m in migrations] == ["0001.base", "0002.child"]
+
+    def test_list_independent_in_lexicographic_order(self, source: Path) -> None:
+        write_graph(source, {"0003.c": "", "0001.a": "", "0002.b": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        assert [m.id for m in collection.list()] == ["0001.a", "0002.b", "0003.c"]
+
+    def test_list_is_deterministic_with_dependency_on_first(
+        self,
+        source: Path,
+    ) -> None:
+        # graphlib.static_order() gives ['0001.a', '0003.c', '0002.b'] here.
+        write_graph(source, {"0001.a": "", "0002.b": "", "0003.c": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        assert [m.id for m in collection.list()] == ["0001.a", "0002.b", "0003.c"]
+
+    def test_list_dependency_changes_order(self, source: Path) -> None:
+        write_graph(source, {"0001.b": "0002.a", "0002.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        assert [m.id for m in collection.list()] == ["0002.a", "0001.b"]
+
+    def test_list_takes_smallest_ready_id(self, source: Path) -> None:
+        write_graph(
+            source,
+            {"0001.x": "0004.d", "0002.y": "", "0003.z": "", "0004.d": ""},
+        )
+        collection = MigrationsCollection(sources=str(source))
+
+        assert [m.id for m in collection.list()] == [
+            "0002.y",
+            "0003.z",
+            "0004.d",
+            "0001.x",
+        ]
 
     def test_list_loads_statements(self, source: Path) -> None:
         write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
@@ -162,6 +205,50 @@ class TestToApply:
 
         assert migrations == []
 
+    def test_target_applies_only_target_and_dependencies(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "", "0003.c": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_apply([], target="0002.b")
+
+        assert [m.id for m in migrations] == ["0002.b"]
+
+    def test_target_applies_transitive_dependencies(self, source: Path) -> None:
+        write_graph(
+            source,
+            {
+                "0001.a": "",
+                "0002.b": "0001.a",
+                "0003.c": "0002.b",
+                "0004.d": "",
+                "0005.e": "0003.c",
+            },
+        )
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_apply([], target="0003.c")
+
+        assert [m.id for m in migrations] == ["0001.a", "0002.b", "0003.c"]
+
+    def test_target_skips_already_applied_dependencies(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a", "0003.c": "0002.b"})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_apply(make_history("0001.a"), target="0003.c")
+
+        assert [m.id for m in migrations] == ["0002.b", "0003.c"]
+
+    def test_target_applied_returns_only_unapplied_dependencies(
+        self,
+        source: Path,
+    ) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_apply(make_history("0002.b"), target="0002.b")
+
+        assert [m.id for m in migrations] == ["0001.a"]
+
     def test_topological_order(self, source: Path) -> None:
         write_file(source / "0001.base.sql", "CREATE TABLE base(id INTEGER);\n")
         write_file(
@@ -255,6 +342,82 @@ class TestToRollback:
         _, migrations = collection.to_rollback(make_history("0001.a"), target="0002.b")
 
         assert migrations == []
+
+    def test_target_rolls_back_dependents_not_independent(
+        self,
+        source: Path,
+    ) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "", "0003.c": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_history("0001.a", "0002.b", "0003.c")
+
+        _, migrations = collection.to_rollback(history, target="0001.a")
+        assert [m.id for m in migrations] == ["0003.c", "0001.a"]
+
+        _, migrations = collection.to_rollback(history, target="0003.c")
+        assert [m.id for m in migrations] == ["0003.c"]
+
+    def test_target_independent_not_rolled_back(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "", "0003.c": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_history("0001.a", "0002.b", "0003.c")
+
+        _, migrations = collection.to_rollback(history, target="0002.b")
+
+        assert [m.id for m in migrations] == ["0002.b"]
+
+    def test_target_rolls_back_transitive_dependents(self, source: Path) -> None:
+        write_graph(
+            source,
+            {
+                "0001.a": "",
+                "0002.b": "0001.a",
+                "0003.c": "0002.b",
+                "0004.d": "",
+                "0005.e": "0003.c",
+            },
+        )
+        collection = MigrationsCollection(sources=str(source))
+        history = make_history("0001.a", "0002.b", "0003.c", "0004.d", "0005.e")
+
+        _, migrations = collection.to_rollback(history, target="0002.b")
+
+        assert [m.id for m in migrations] == ["0005.e", "0003.c", "0002.b"]
+
+    def test_target_skips_not_applied_dependents(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a", "0003.c": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_rollback(
+            make_history("0001.a", "0002.b"),
+            target="0001.a",
+        )
+
+        assert [m.id for m in migrations] == ["0002.b", "0001.a"]
+
+    def test_target_not_applied_rolls_back_applied_dependents(
+        self,
+        source: Path,
+    ) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_rollback(make_history("0002.b"), target="0001.a")
+
+        assert [m.id for m in migrations] == ["0002.b"]
+
+    def test_order_is_reverse_of_list(self, source: Path) -> None:
+        write_graph(
+            source,
+            {"0001.b": "0002.a", "0002.a": "", "0003.c": "", "0004.d": "0003.c"},
+        )
+        collection = MigrationsCollection(sources=str(source))
+        history = make_history("0001.b", "0002.a", "0003.c", "0004.d")
+
+        _, migrations = collection.to_rollback(history)
+
+        assert [m.id for m in migrations] == [m.id for m in reversed(collection.list())]
+        assert [m.id for m in migrations] == ["0004.d", "0003.c", "0001.b", "0002.a"]
 
     def test_rolled_back_migration_not_rolled_back_again(self, source: Path) -> None:
         write_file(source / "0001.a.sql", "CREATE TABLE a(id INTEGER);\n")

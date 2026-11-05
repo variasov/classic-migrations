@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import heapq
 import re
 from collections import OrderedDict
 from glob import glob
@@ -247,15 +248,29 @@ class MigrationsCollection:
                     raise exceptions.NoMigration(
                         f"Could not resolve dependency {d!r} in {m.path}",
                     )
-        dependency_graph = {m: {by_id[d] for d in m.depends} for m in ml}
+        sorter = TopologicalSorter(
+            {m.id: set(m.depends) for m in ml},
+        )
         try:
-            return list(TopologicalSorter(dependency_graph).static_order())
+            sorter.prepare()
         except CycleError as e:
             raise exceptions.BadMigration(
                 "Circular dependencies among these migrations {}".format(
-                    ", ".join(m.id for m in e.args[1]),
+                    ", ".join(e.args[1]),
                 ),
             ) from e
+        # Among the migrations ready to run, always take the smallest id,
+        # so the order is deterministic.
+        ready = list(sorter.get_ready())
+        heapq.heapify(ready)
+        result: list[Migration] = []
+        while ready:
+            migration_id = heapq.heappop(ready)
+            result.append(by_id[migration_id])
+            sorter.done(migration_id)
+            for new_id in sorter.get_ready():
+                heapq.heappush(ready, new_id)
+        return result
 
     @staticmethod
     def applied_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
@@ -270,7 +285,13 @@ class MigrationsCollection:
         }
 
     def list(self) -> list[Migration]:
-        """Return all migrations in topological order."""
+        """Return all migrations in a deterministic topological order.
+
+        A migration always goes after the ones it depends on. Among the
+        migrations that are ready at the same time the one with the smallest
+        id (plain string comparison) goes first, so without dependencies the
+        order is just the sorted ids.
+        """
         if self._migrations is None:
             migrations = self._read_migrations()
             self._migrations = self._topological(migrations)
@@ -281,50 +302,82 @@ class MigrationsCollection:
             self._hooks = self._read_hooks()
         return self._hooks
 
+    def _check_target(self, target: str) -> None:
+        if target not in {m.id for m in self.list()}:
+            raise exceptions.NoMigration(f"Migration {target!r} not found")
+
+    def _dependencies_closure(self, target: str) -> set[str]:
+        """Return ``target`` and all its transitive dependencies."""
+        by_id = {m.id: m for m in self.list()}
+        closure: set[str] = set()
+        stack = [target]
+        while stack:
+            migration_id = stack.pop()
+            if migration_id in closure:
+                continue
+            closure.add(migration_id)
+            stack.extend(by_id[migration_id].depends)
+        return closure
+
+    def _dependents_closure(self, target: str) -> set[str]:
+        """Return ``target`` and all migrations transitively depending on it."""
+        closure = {target}
+        # list() is topological, so dependents always come after dependencies.
+        for m in self.list():
+            if m.id not in closure and m.depends & closure:
+                closure.add(m.id)
+        return closure
+
     def to_apply(
         self,
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
-        """Return hooks and the migations that should be applied."""
+        """Return hooks and the migrations that should be applied.
+
+        Without ``target`` these are all not yet applied migrations. With
+        ``target`` these are the target and all its transitive dependencies
+        that are not yet applied; unrelated migrations are left alone. If the
+        target is already applied, only its unapplied dependencies are
+        returned. The order is the common topological order of ``list()``.
+        Unknown ``target`` raises ``NoMigration``.
+        """
         migrations = self.list()
         applied = self.applied_ids(history)
-        result = [m for m in migrations if m.id not in applied]
+        keep: set[str] | None = None
         if target is not None:
-            if target not in (m.id for m in migrations):
-                raise exceptions.NoMigration(f"Migration {target!r} not found")
-            target_idx = next(
-                (i for i, m in enumerate(migrations) if m.id == target),
-                -1,
-            )
-            keep_ids = {m.id for m in migrations[: target_idx + 1]}
-            result = [m for m in result if m.id in keep_ids]
-        hooks = self._get_hooks()
-        return hooks, result
+            self._check_target(target)
+            keep = self._dependencies_closure(target)
+        result = [
+            m
+            for m in migrations
+            if m.id not in applied and (keep is None or m.id in keep)
+        ]
+        return self._get_hooks(), result
 
     def to_rollback(
         self,
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
-        """Return hooks and the migrations that should be rolled back."""
+        """Return hooks and the migrations that should be rolled back.
+
+        Without ``target`` these are all applied migrations. With ``target``
+        these are the currently applied ones among the target and all
+        migrations transitively depending on it; unrelated migrations are left
+        alone. If the target itself is not applied, its applied dependents are
+        still returned. The order is the reverse of the topological order of
+        ``list()``. Unknown ``target`` raises ``NoMigration``.
+        """
         migrations = self.list()
         applied = self.applied_ids(history)
-        reversed_migrations = list(reversed(migrations))
-        result = [m for m in reversed_migrations if m.id in applied]
+        keep: set[str] | None = None
         if target is not None:
-            if target not in {m.id for m in migrations}:
-                raise exceptions.NoMigration(f"Migration {target!r} not found")
-            target_idx = next(
-                (i for i, m in enumerate(migrations) if m.id == target),
-                -1,
-            )
-            if target not in {m.id for m in result}:
-                result = []
-            else:
-                descendants: set[str] = {target}
-                for m in migrations[target_idx:]:
-                    descendants.add(m.id)
-                result = [m for m in result if m.id in descendants]
-        hooks = self._get_hooks()
-        return hooks, result
+            self._check_target(target)
+            keep = self._dependents_closure(target)
+        result = [
+            m
+            for m in reversed(migrations)
+            if m.id in applied and (keep is None or m.id in keep)
+        ]
+        return self._get_hooks(), result
