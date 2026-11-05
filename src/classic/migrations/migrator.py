@@ -86,7 +86,7 @@ class Migrator:
         """Connect and acquire a lock on the database."""
         logger.debug("Connecting to %s database %s", self._driver, self._db_name)
         backend_class = Backend.get_implementation(self._driver)
-        self._backend = backend_class(
+        backend = backend_class(
             db_host=self._db_host,
             db_port=self._db_port,
             db_name=self._db_name,
@@ -96,7 +96,19 @@ class Migrator:
             migration_schema=self._migration_schema,
             versions_schema=self._versions_schema,
         )
-        self._backend.acquire_lock()
+        try:
+            backend.acquire_lock()
+        except BaseException:
+            # Do not leak the connection; never mask the original error.
+            try:
+                backend.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close connection after lock failure",
+                    exc_info=True,
+                )
+            raise
+        self._backend = backend
         logger.debug("Advisory lock acquired via %s", backend_class.__name__)
         return self
 
@@ -105,13 +117,35 @@ class Migrator:
 
         ``release_lock`` releases the advisory lock (a session-level lock,
         or a companion lock file on SQLite); it does not commit anything.
+        The connection is always closed and the backend forgotten. If the
+        body raised, errors from cleanup are logged and do not replace the
+        original exception.
         """
-        if self._backend is not None:
-            if exc_type is not None:
+        backend = self._backend
+        if backend is None:
+            return
+        failed = exc_type is not None
+        try:
+            if failed:
                 logger.warning("Rolling back transaction after error: %s", exc_value)
-                self._backend.rollback()
-            self._backend.release_lock()
-        self.close()
+                try:
+                    backend.rollback()
+                except Exception:
+                    logger.warning("Rollback failed", exc_info=True)
+            try:
+                backend.release_lock()
+            except Exception:
+                if not failed:
+                    raise
+                logger.warning("Releasing the lock failed", exc_info=True)
+        finally:
+            self._backend = None
+            try:
+                backend.close()
+            except Exception:
+                if not failed:
+                    raise
+                logger.warning("Closing the connection failed", exc_info=True)
 
     def history(self) -> list[tuple[Any, ...]]:
         """Return the migration history event log.
@@ -123,7 +157,6 @@ class Migrator:
             "Reading migration history from table %r",
             backend.migration_table,
         )
-        backend.ensure_migration_table()
         rows = backend.migration_history()
         logger.debug("Read %d history event(s)", len(rows))
         return rows

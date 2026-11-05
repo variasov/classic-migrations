@@ -139,9 +139,20 @@ class Backend:
         self.versions_schema = versions_schema
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect()
-        self.init_connection(self._connection)
-        self.migration_table_quoted = self.quote_table(self.migration_table)
-        self.versions_table_quoted = self.quote_versions_table()
+        try:
+            self.init_connection(self._connection)
+            self.migration_table_quoted = self.quote_table(self.migration_table)
+            self.versions_table_quoted = self.quote_versions_table()
+        except BaseException:
+            # Do not leak the connection; never mask the original error.
+            try:
+                self._connection.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close connection after initialization failure",
+                    exc_info=True,
+                )
+            raise
         self._in_transaction = False
 
     # ------------------------------------------------------------------

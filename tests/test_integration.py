@@ -2,7 +2,9 @@
 Integration test of the public API against a real in-memory SQLite database.
 """
 
+import gc
 import sqlite3
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -320,6 +322,23 @@ class TestFileDbTransactions:
 
         with first, pytest.raises(MigrationLockError), second:
             pass
+        with second:
+            pass
+
+    def test_failed_lock_does_not_leak_connection(self, tmp_path: Path) -> None:
+        db_file = tmp_path / "db.sqlite"
+        first = Migrator(driver="sqlite3", db_name=str(db_file))
+        second = Migrator(driver="sqlite3", db_name=str(db_file))
+
+        with first:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                with pytest.raises(MigrationLockError), second:
+                    pass
+                gc.collect()
+            assert second._backend is None
+        leaks = [w for w in caught if issubclass(w.category, ResourceWarning)]
+        assert leaks == []
         with second:
             pass
 

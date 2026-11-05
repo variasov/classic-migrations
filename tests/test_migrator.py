@@ -1,3 +1,5 @@
+import logging
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
 
@@ -11,6 +13,16 @@ from tests.backends.fake import FakeBackend
 def write_file(path: Path, content: str) -> Path:
     path.write_text(content, encoding="utf-8")
     return path
+
+
+@pytest.fixture
+def failing() -> Iterator[dict[str, Exception]]:
+    """Operations that newly created FakeBackends must fail on."""
+    FakeBackend.instances.clear()
+    FakeBackend.default_fail_on.clear()
+    yield FakeBackend.default_fail_on
+    FakeBackend.default_fail_on.clear()
+    FakeBackend.instances.clear()
 
 
 def _fake_backend(migrator: Migrator) -> FakeBackend:
@@ -81,6 +93,122 @@ class TestLock:
             migrator.rollback([], {})
 
 
+class TestCleanup:
+    def test_acquire_lock_failure_closes_and_resets(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["acquire_lock"] = KeyError("lock")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(KeyError, match="lock"), migrator:
+            pytest.fail("body must not run")
+        assert FakeBackend.instances[0].close_calls == 1
+        assert migrator._backend is None
+        with pytest.raises(RuntimeError):
+            _ = migrator.backend
+
+        failing.clear()
+        with migrator:
+            assert _fake_backend(migrator).locked
+        assert migrator._backend is None
+
+    def test_acquire_lock_failure_survives_close_failure(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["acquire_lock"] = KeyError("lock")
+        failing["close"] = OSError("close")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(KeyError, match="lock"), migrator:
+            pytest.fail("body must not run")
+        assert migrator._backend is None
+
+    def test_constructor_failure_leaves_no_backend(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def boom(self: FakeBackend, **kwargs: object) -> None:
+            raise ValueError("ctor")
+
+        monkeypatch.setattr(FakeBackend, "__init__", boom)
+        migrator = Migrator(driver="fake")
+        with pytest.raises(ValueError, match="ctor"), migrator:
+            pytest.fail("body must not run")
+        assert migrator._backend is None
+
+    def test_body_error_wins_over_release_lock_failure(
+        self,
+        failing: dict[str, Exception],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        failing["release_lock"] = OSError("release")
+        migrator = Migrator(driver="fake")
+        with (
+            caplog.at_level(logging.WARNING, logger="classic.migrations"),
+            pytest.raises(RuntimeError, match="boom"),
+            migrator,
+        ):
+            raise RuntimeError("boom")
+        backend = FakeBackend.instances[0]
+        assert backend.close_calls == 1
+        assert migrator._backend is None
+        assert "Releasing the lock failed" in caplog.text
+
+    def test_body_error_wins_over_rollback_failure(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["rollback"] = OSError("rollback")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(RuntimeError, match="boom"), migrator:
+            raise RuntimeError("boom")
+        backend = FakeBackend.instances[0]
+        assert ("release_lock", None) in backend.oplog
+        assert backend.close_calls == 1
+        assert migrator._backend is None
+
+    def test_body_error_wins_over_close_failure(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["close"] = OSError("close")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(RuntimeError, match="boom"), migrator:
+            raise RuntimeError("boom")
+        assert FakeBackend.instances[0].close_calls == 1
+        assert migrator._backend is None
+
+    def test_release_lock_failure_raised_without_body_error(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["release_lock"] = OSError("release")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(OSError, match="release"), migrator:
+            pass
+        assert FakeBackend.instances[0].close_calls == 1
+        assert migrator._backend is None
+
+    def test_close_failure_raised_without_body_error(
+        self,
+        failing: dict[str, Exception],
+    ) -> None:
+        failing["close"] = OSError("close")
+        migrator = Migrator(driver="fake")
+        with pytest.raises(OSError, match="close"), migrator:
+            pass
+        assert migrator._backend is None
+
+    def test_reusable_after_failed_body(self) -> None:
+        migrator = Migrator(driver="fake")
+        with pytest.raises(RuntimeError, match="boom"), migrator:
+            raise RuntimeError("boom")
+        with migrator:
+            assert migrator.history() == []
+        with migrator:
+            assert migrator.history() == []
+
+
 class TestHistory:
     def test_history_returns_event_log(self) -> None:
         migrator = Migrator(driver="fake")
@@ -102,6 +230,13 @@ class TestHistory:
             assert not backend.migration_table_ready
             migrator.history()
             assert backend.migration_table_ready
+
+    def test_history_ensures_table_once(self) -> None:
+        migrator = Migrator(driver="fake")
+        with migrator:
+            backend = _fake_backend(migrator)
+            migrator.history()
+            assert backend.ensure_calls == 1
 
 
 class TestApply:
