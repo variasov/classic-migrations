@@ -42,3 +42,7 @@ class MigrationLockError(Exception):
 
 class MigrationPending(Exception):
     """A migration is left PENDING by a run that failed midway."""
+
+
+class MissingSource(Exception):
+    """A migrations source directory does not exist."""

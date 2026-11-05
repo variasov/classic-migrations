@@ -23,6 +23,7 @@ from .exceptions import (
     MigrationConflict,
     MigrationLockError,
     MigrationPending,
+    MissingSource,
     NoMigration,
 )
 from .migrations import MigrationsCollection
@@ -41,6 +42,7 @@ __all__ = (
     "MigrationPending",
     "MigrationsCollection",
     "Migrator",
+    "MissingSource",
     "NoMigration",
     "Settings",
     "__version__",

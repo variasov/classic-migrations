@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import difflib
 import heapq
+import os
 import re
 from collections import OrderedDict
 from glob import glob
@@ -240,24 +241,32 @@ class Hook:
 class MigrationsCollection:
     """Collection of migrations read from one or more source directories."""
 
-    def __init__(self, sources: str | list[str]) -> None:
-        """Initialize a collection for the given source directories."""
-        if not sources:
+    def __init__(
+        self,
+        sources: str | os.PathLike[str] | Iterable[str | os.PathLike[str]],
+    ) -> None:
+        """Initialize a collection for the given source directories.
+
+        ``sources`` is a single path (``str`` or ``os.PathLike``) or an
+        iterable of paths. Each path may be a glob pattern.
+        """
+        if isinstance(sources, (str, os.PathLike)):
+            self.sources: list[str] = [os.fspath(sources)]
+        else:
+            self.sources = [os.fspath(s) for s in sources]
+        if not self.sources or not any(self.sources):
             raise ValueError("sources must not be empty")
-        self.sources = sources
         self._migrations: list[Migration] | None = None
         self._hooks: dict[str, list[Hook]] | None = None
 
-    def _source_list(self) -> list[str]:
-        if isinstance(self.sources, str):
-            return [self.sources]
-        return list(self.sources)
-
     def _expand_sources(self) -> Iterable[str]:
-        for source in self._source_list():
-            for directory in glob(source):  # noqa: PTH207
-                if Path(directory).is_dir():
-                    yield directory
+        for source in self.sources:
+            found = [d for d in glob(source) if Path(d).is_dir()]  # noqa: PTH207
+            if not found:
+                raise exceptions.MissingSource(
+                    f"Migrations source {source!r} does not match any directory",
+                )
+            yield from found
 
     def _read_migrations(self) -> list[Migration]:
         migrations: OrderedDict[str, Migration] = OrderedDict()

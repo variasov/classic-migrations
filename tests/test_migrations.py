@@ -892,3 +892,52 @@ class TestDirectiveParsing:
         hook.load()
 
         assert hook.statements == ["SELECT 1;"]
+
+
+class TestSources:
+    def test_accepts_path(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(source)
+        assert [m.id for m in collection.list()] == ["0001.a"]
+        assert collection.sources == [str(source)]
+
+    def test_accepts_list_of_paths(self, source: Path) -> None:
+        sub = source / "sub"
+        write_file(source / "0001.a.sql", "SELECT 1;\n")
+        write_file(sub / "0002.b.sql", "SELECT 1;\n")
+        collection = MigrationsCollection([source, sub])
+        assert [m.id for m in collection.list()] == ["0001.a", "0002.b"]
+
+    def test_missing_directory(self, source: Path) -> None:
+        collection = MigrationsCollection(source / "nope")
+        with pytest.raises(exceptions.MissingSource, match="does not match"):
+            collection.list()
+
+    def test_missing_directory_among_existing(self, source: Path) -> None:
+        collection = MigrationsCollection([source, source / "nope"])
+        with pytest.raises(exceptions.MissingSource):
+            collection.to_apply([])
+
+    def test_glob_without_matches(self, source: Path) -> None:
+        collection = MigrationsCollection(str(source / "mig-*"))
+        with pytest.raises(exceptions.MissingSource):
+            collection.list()
+
+    def test_path_to_file(self, source: Path) -> None:
+        file = write_file(source / "0001.a.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(file)
+        with pytest.raises(exceptions.MissingSource):
+            collection.list()
+
+    def test_glob_with_matches(self, source: Path) -> None:
+        write_file(source / "mig-1" / "0001.a.sql", "SELECT 1;\n")
+        write_file(source / "mig-2" / "0002.b.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(str(source / "mig-*"))
+        assert [m.id for m in collection.list()] == ["0001.a", "0002.b"]
+
+    def test_empty_existing_directory(self, source: Path) -> None:
+        assert MigrationsCollection(source).list() == []
+
+    def test_empty_sources(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            MigrationsCollection([])

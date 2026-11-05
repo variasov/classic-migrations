@@ -49,7 +49,7 @@ class Settings:
 
     @property
     def SOURCES(self) -> str:
-        """Return the colon-separated list of migration source directories."""
+        """Return the migration source directories, separated by ``os.pathsep``."""
         return self._environ.get("SOURCES", "")
 
     @property
@@ -118,5 +118,10 @@ class Settings:
 
     @property
     def sources_list(self) -> list[str]:
-        """Return the migration source directories as a list."""
-        return [s for s in self.SOURCES.split(":") if s]
+        """Return the migration source directories as a list.
+
+        ``SOURCES`` is split by ``os.pathsep`` (``;`` on Windows, ``:`` on
+        POSIX); blank items and surrounding whitespace are dropped.
+        """
+        parts = (s.strip() for s in self.SOURCES.split(os.pathsep))
+        return [s for s in parts if s]
