@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from classic.migrations import MigrationsCollection, exceptions
-from classic.migrations.migrations import Migration
+from classic.migrations.migrations import Hook, Migration
 
 
 def write_file(path: Path, content: str) -> Path:
@@ -571,3 +571,101 @@ class TestMigration:
 
         with pytest.raises(exceptions.BadMigration):
             migration.load()
+
+
+def _load(source: Path, header: str, rollback: str | None = None) -> Migration:
+    write_file(source / "0001.init.sql", header + "CREATE TABLE t(id INTEGER);\n")
+    if rollback is not None:
+        write_file(source / "0001.init.rollback.sql", rollback + "DROP TABLE t;\n")
+    migration = Migration("0001.init", str(source / "0001.init.sql"))
+    migration.load()
+    return migration
+
+
+class TestDirectiveParsing:
+    def test_names_are_case_insensitive(self, source: Path) -> None:
+        migration = _load(
+            source,
+            "-- Depends: 0000.a\n-- TRANSACTIONAL: False\n",
+        )
+
+        assert migration.depends == {"0000.a"}
+        assert migration.transactional is False
+
+    @pytest.mark.parametrize(
+        ("line", "hint"),
+        [
+            ("-- depend: 0000.a", "depends"),
+            ("-- transactonal: false", "transactional"),
+            ("-- depends_on: 0000.a", "depends"),
+        ],
+    )
+    def test_typo_raises_with_hint(self, source: Path, line: str, hint: str) -> None:
+        with pytest.raises(exceptions.BadMigration) as exc:
+            _load(source, f"-- Author: me\n{line}\n")
+
+        message = str(exc.value)
+        assert "0001.init.sql" in message
+        assert f"did you mean '{hint}'?" in message
+        assert ":2" in message
+
+    def test_ordinary_comments_are_ignored(self, source: Path) -> None:
+        migration = _load(
+            source,
+            "-- TODO: fix\n-- Author: me\n-- Note: x\n-- Description: y\n"
+            "-- depends: 0000.a\n",
+        )
+
+        assert migration.depends == {"0000.a"}
+
+    def test_directive_after_sql_is_ignored(self, source: Path) -> None:
+        write_file(
+            source / "0001.init.sql",
+            "CREATE TABLE t(id INTEGER);\n-- depend: 0000.a\n",
+        )
+        migration = Migration("0001.init", str(source / "0001.init.sql"))
+        migration.load()
+
+        assert migration.depends == set()
+
+    def test_several_depends_lines_are_merged(self, source: Path) -> None:
+        migration = _load(source, "-- depends: 0000.a\n-- depends: 0000.b\n")
+
+        assert migration.depends == {"0000.a", "0000.b"}
+
+    def test_depends_separated_by_spaces(self, source: Path) -> None:
+        migration = _load(source, "-- depends: 0000.a 0000.b\n")
+
+        assert migration.depends == {"0000.a", "0000.b"}
+
+    def test_depends_mixed_separators(self, source: Path) -> None:
+        migration = _load(source, "-- depends: 0000.a, 0000.b 0000.c\n")
+
+        assert migration.depends == {"0000.a", "0000.b", "0000.c"}
+
+    def test_duplicate_transactional_raises(self, source: Path) -> None:
+        with pytest.raises(exceptions.BadMigration, match="Duplicate"):
+            _load(source, "-- transactional: true\n-- transactional: false\n")
+
+    def test_rollback_directive_case_insensitive(self, source: Path) -> None:
+        migration = _load(source, "", "-- Transactional: false\n")
+
+        assert migration.rollback_transactional is False
+
+    def test_rollback_depends_raises(self, source: Path) -> None:
+        with pytest.raises(exceptions.BadMigration):
+            _load(source, "", "-- Depends: 0000.x\n")
+
+    def test_rollback_typo_raises(self, source: Path) -> None:
+        with pytest.raises(exceptions.BadMigration, match=r"rollback.sql"):
+            _load(source, "", "-- transactonal: false\n")
+
+    def test_hook_ignores_directives_and_typos(self, source: Path) -> None:
+        write_file(
+            source / "pre-apply.sql",
+            "-- depend: x\n-- depends: y\nSELECT 1;\n",
+        )
+        hook = Hook("pre-apply", str(source / "pre-apply.sql"))
+        hook.load()
+
+        assert hook.statements == ["SELECT 1;"]

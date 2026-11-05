@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import difflib
 import heapq
 import re
 from collections import OrderedDict
@@ -37,33 +38,60 @@ logger = getLogger("classic.migrations")
 
 HOOK_NAMES = ("pre-apply", "post-apply", "pre-rollback", "post-rollback")
 
-DirectivesType = dict[str, str]
+DIRECTIVE_NAMES = ("transactional", "depends")
+# Minimum difflib ratio for a header word to be taken for a misspelt directive.
+# 0.8 catches ``depend``, ``dependss``, ``depends_on``, ``transactonal``,
+# ``transactionnal``, ``transaction`` but not ``TODO``, ``Author``, ``Note``.
+_TYPO_CUTOFF = 0.8
+
+# Directive name -> values of every header line carrying it, in file order.
+DirectivesType = dict[str, list[str]]
+
+_HEADER_DIRECTIVE = re.compile(r"^\s*--\s*([\w-]+)\s*:\s*(.*?)\s*$")
+_COMMENT_OR_EMPTY = re.compile(r"^(\s*|\s*--.*)$")
 
 
-def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
-    """Extract migration directives from the leading comment block of ``s``."""
-    directive_names = ["transactional", "depends"]
-    comment_or_empty = re.compile(r"^(\s*|\s*--.*)$").match
-    directive_pattern = re.compile(
-        r"^\s*--\s*({})\s*:\s*(.*)$".format(
-            "|".join(map(re.escape, directive_names)),
-        ),
-    )
+def parse_metadata_from_sql_comments(
+    s: str,
+    path: str = "<sql>",
+    *,
+    check_typos: bool = True,
+    first_line: int = 1,
+) -> tuple[DirectivesType, str]:
+    """Extract migration directives from the leading comment block of ``s``.
 
+    Directive names are case-insensitive. Only the header (everything before
+    the first SQL line) is scanned. A ``-- word: value`` line whose word is
+    not a directive is an ordinary comment, unless ``check_typos`` is set and
+    the word closely resembles a directive name (``-- depend: a``): then
+    ``BadMigration`` is raised, mentioning ``path`` and the line number
+    (``first_line`` is the file line number of the first line of ``s``).
+    """
     match = re.search(r"\n|\r\n|\r", s + "\n")
     lineending = "\n" if match is None else match.group(0)
     lines = iter(s.split(lineending))
     directives: DirectivesType = {}
     sql: list[str] = []
-    for line in lines:
-        match = directive_pattern.match(line)
+    for lineno, line in enumerate(lines, start=first_line):
+        match = _HEADER_DIRECTIVE.match(line)
         if match:
-            k, v = match.groups()
-            if k in directives:
-                directives[k] += f" {v}"
-            else:
-                directives[k] = v
-        elif comment_or_empty(line):
+            word, value = match.groups()
+            name = word.lower()
+            if name in DIRECTIVE_NAMES:
+                directives.setdefault(name, []).append(value)
+            elif check_typos:
+                close = difflib.get_close_matches(
+                    name,
+                    DIRECTIVE_NAMES,
+                    n=1,
+                    cutoff=_TYPO_CUTOFF,
+                )
+                if close:
+                    raise exceptions.BadMigration(
+                        f"Unknown directive {word!r} in {path}:{lineno}, "
+                        f"did you mean {close[0]!r}?",
+                    )
+        elif _COMMENT_OR_EMPTY.match(line):
             continue
         else:
             sql.append(line)
@@ -72,19 +100,52 @@ def parse_metadata_from_sql_comments(s: str) -> tuple[DirectivesType, str]:
     return directives, lineending.join(sql)
 
 
-def read_sql(path: str) -> tuple[DirectivesType, list[str]]:
+def read_sql(
+    path: str,
+    *,
+    check_typos: bool = True,
+) -> tuple[DirectivesType, list[str]]:
     """Read ``path``, returning its directives and SQL statements."""
     directives: DirectivesType = {}
     statements: list[str] = []
     sql_path = Path(path)
     if sql_path.exists():
         with sql_path.open(encoding="UTF-8") as f:
-            statements = sqlparse.split(f.read())
-            if statements:
-                directives, sql = parse_metadata_from_sql_comments(statements[0])
-                statements[0] = sql
+            text = f.read()
+        # sqlparse strips leading whitespace; keep line numbers true to the file.
+        skipped = text[: len(text) - len(text.lstrip())]
+        statements = sqlparse.split(text)
+        if statements:
+            directives, sql = parse_metadata_from_sql_comments(
+                statements[0],
+                path,
+                check_typos=check_typos,
+                first_line=1 + len(re.findall(r"\r\n|\n|\r", skipped)),
+            )
+            statements[0] = sql
     statements = [s for s in statements if s.strip()]
     return directives, statements
+
+
+def _parse_transactional(
+    directives: DirectivesType,
+    path: str,
+    what: str,
+) -> bool | None:
+    """Return the value of the ``transactional`` directive, if present once."""
+    values = directives.get("transactional")
+    if values is None:
+        return None
+    if len(values) > 1:
+        raise exceptions.BadMigration(
+            f"Duplicate transactional directive in {what}{path}",
+        )
+    value = values[0].lower()
+    if value not in ("true", "false"):
+        raise exceptions.BadMigration(
+            f"Invalid transactional directive {values[0]!r} in {what}{path}",
+        )
+    return value == "true"
 
 
 class Migration:
@@ -114,18 +175,15 @@ class Migration:
         directives, statements = read_sql(self.path)
         rb_directives, rollback_statements = read_sql(self.rollback_path())
 
+        # Ids are file names without ".sql", so they never contain commas or
+        # whitespace: both separate ids, and several lines are merged.
         self.depends = {
-            d.strip() for d in directives.get("depends", "").split(",") if d.strip()
+            d
+            for value in directives.get("depends", [])
+            for d in re.split(r"[,\s]+", value)
+            if d
         }
-        transactional_raw = directives.get("transactional")
-        if transactional_raw is None:
-            self.transactional = None
-        elif transactional_raw.lower() in ("true", "false"):
-            self.transactional = transactional_raw.lower() == "true"
-        else:
-            raise exceptions.BadMigration(
-                f"Invalid transactional directive {transactional_raw!r} in {self.path}",
-            )
+        self.transactional = _parse_transactional(directives, self.path, "")
 
         self._load_rollback_directives(rb_directives)
 
@@ -147,16 +205,11 @@ class Migration:
                 raise exceptions.BadMigration(
                     f"Invalid directive {k!r} in rollback file {self.rollback_path()}",
                 )
-        transactional_raw = rb_directives.get("transactional")
-        if transactional_raw is None:
-            self.rollback_transactional = None
-        elif transactional_raw.lower() in {"true", "false"}:
-            self.rollback_transactional = transactional_raw.lower() == "true"
-        else:
-            raise exceptions.BadMigration(
-                f"Invalid transactional directive {transactional_raw!r} "
-                f"in rollback file {self.rollback_path()}",
-            )
+        self.rollback_transactional = _parse_transactional(
+            rb_directives,
+            self.rollback_path(),
+            "rollback file ",
+        )
 
     def rollback_path(self) -> str:
         """Return the path of the rollback file paired with this migration."""
@@ -178,7 +231,8 @@ class Hook:
         """Load this hook's SQL statements (idempotent)."""
         if self._loaded:
             return
-        _directives, statements = read_sql(self.path)
+        # Directives are meaningless in hooks: ignore them, typos included.
+        _directives, statements = read_sql(self.path, check_typos=False)
         self.statements = statements
         self._loaded = True
 
