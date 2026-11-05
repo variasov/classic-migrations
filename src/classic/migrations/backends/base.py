@@ -28,7 +28,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from classic.migrations.exceptions import BadConnectionURI
+from classic.migrations.exceptions import BadConnectionURI, MigrationLockError
 
 logger = getLogger("classic.migrations")
 
@@ -121,6 +121,7 @@ class Backend:
         db_user: str | None = None,
         db_password: str | None = None,
         db_args: dict[str, Any] | None = None,
+        lock_timeout: float | None = None,
         migration_table: str = "migrations",
         migration_schema: str | None = None,
         versions_table: str = "versions",
@@ -133,6 +134,10 @@ class Backend:
         self.db_user = db_user
         self.db_password = db_password
         self.db_args = db_args or {}
+        if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
+            raise ValueError("lock_timeout must not be negative")
+        # An infinite timeout means waiting forever.
+        self.lock_timeout = None if lock_timeout == float("inf") else lock_timeout
         self.migration_table = migration_table
         self.migration_schema = migration_schema
         self.versions_table = versions_table
@@ -281,10 +286,22 @@ class Backend:
         yield
 
     def acquire_lock(self) -> None:
-        """Acquire a session-level lock on the database."""
+        """Acquire a session-level lock on the database.
+
+        Waits according to :attr:`lock_timeout`: ``None`` waits forever,
+        ``0`` does not wait, ``N > 0`` waits up to ``N`` seconds. Raises
+        :class:`MigrationLockError` if the lock could not be acquired.
+        """
         raise NotImplementedError(
             "Native session locking is not implemented for this backend",
         )
+
+    def lock_error(self) -> MigrationLockError:
+        """Return the error to raise when the lock cannot be acquired."""
+        message = "Could not acquire advisory lock on the database"
+        if self.lock_timeout:
+            message += f" within {self.lock_timeout:g} s"
+        return MigrationLockError(message)
 
     def release_lock(self) -> None:
         """Release the session-level lock on the database."""

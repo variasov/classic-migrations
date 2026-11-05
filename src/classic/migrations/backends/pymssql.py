@@ -21,7 +21,6 @@ from typing import Any
 import pymssql
 
 from classic.migrations.backends.base import Backend
-from classic.migrations.exceptions import MigrationLockError
 
 
 class PyMSSQLBackend(Backend, driver=pymssql):
@@ -109,18 +108,19 @@ class PyMSSQLBackend(Backend, driver=pymssql):
 
     def acquire_lock(self) -> None:
         """Acquire a SQL Server application lock for this migration table."""
+        # @LockTimeout is in milliseconds; -1 waits forever.
+        timeout_ms = -1 if self.lock_timeout is None else int(self.lock_timeout * 1000)
         cursor = self.execute(
             "DECLARE @res int; "
             "EXEC @res = sp_getapplock @Resource=%s, @LockMode='Exclusive', "
-            "@LockOwner='Session', @LockTimeout=0; "
+            "@LockOwner='Session', @LockTimeout=%s; "
             "SELECT @res",
-            (self.migration_table,),
+            (self.migration_table, timeout_ms),
         )
         row = cursor.fetchone()
-        if row is None or row[0] != 0:
-            raise MigrationLockError(
-                "Could not acquire advisory lock on the database",
-            )
+        # 0 = granted immediately, 1 = granted after waiting; <0 = failure.
+        if row is None or row[0] < 0:
+            raise self.lock_error()
 
     def release_lock(self) -> None:
         """Release the SQL Server application lock."""

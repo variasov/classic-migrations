@@ -522,6 +522,39 @@ class TestLifecycle:
         assert not backend.locked
         assert ("release_lock", None) in backend.oplog
 
+    def test_lock_timeout_and_db_args_passed_to_backend(self) -> None:
+        migrator = Migrator(
+            driver="fake",
+            db_args={"connect_timeout": 5},
+            lock_timeout=2.5,
+        )
+        with migrator:
+            backend = _fake_backend(migrator)
+            assert backend.lock_timeout == 2.5
+            assert backend.db_args == {"connect_timeout": 5}
+
+    def test_lock_timeout_and_db_args_default(self) -> None:
+        migrator = Migrator(driver="fake")
+        with migrator:
+            backend = _fake_backend(migrator)
+            assert backend.lock_timeout is None
+            assert not backend.db_args
+
+    def test_zero_lock_timeout_is_valid(self) -> None:
+        migrator = Migrator(driver="fake", lock_timeout=0)
+        with migrator:
+            assert _fake_backend(migrator).lock_timeout == 0
+
+    def test_negative_lock_timeout_raises(self) -> None:
+        with pytest.raises(ValueError, match="lock_timeout"):
+            Migrator(driver="fake", lock_timeout=-1)
+
     def test_empty_driver_raises(self) -> None:
         with pytest.raises(ValueError):
             Migrator(driver="")
+
+
+@pytest.mark.parametrize("value", [-1.0, float("nan")])
+def test_invalid_lock_timeout_raises(value: float) -> None:
+    with pytest.raises(ValueError, match="lock_timeout"):
+        Migrator(driver="fake", lock_timeout=value)

@@ -583,6 +583,7 @@ def empty_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         "DATABASE_HOST",
         "DATABASE_USER",
         "DATABASE_PASSWORD",
+        "MIGRATIONS_LOCK_TIMEOUT",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.chdir(tmp_path)
@@ -701,6 +702,55 @@ class TestConfigErrors:
         assert err.startswith("error: DATABASE_PORT must be an integer")
         assert "abc" in err
         assert "Traceback" not in err
+
+    def test_lock_timeout_not_number(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SOURCES", str(empty_env))
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", "abc")
+        assert main(["apply"]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "error: MIGRATIONS_LOCK_TIMEOUT must be a non-negative number",
+        )
+        assert "Traceback" not in err
+
+    def test_lock_timeout_negative(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("SOURCES", str(empty_env))
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", "-1")
+        assert main(["apply"]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "error: MIGRATIONS_LOCK_TIMEOUT must be a non-negative number",
+        )
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [(None, None), ("", None), ("0", 0.0), ("2.5", 2.5)],
+    )
+    def test_lock_timeout_passed_to_migrator(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        raw: str | None,
+        expected: float | None,
+    ) -> None:
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        if raw is not None:
+            monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", raw)
+        with patch("classic.migrations.cli.Migrator") as migrator_cls:
+            CLI()._make_migrator()
+        assert migrator_cls.call_args.kwargs["lock_timeout"] == expected
 
 
 class TestErrorHandling:

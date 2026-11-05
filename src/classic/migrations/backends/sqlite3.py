@@ -22,7 +22,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from classic.migrations.backends.base import Backend
-from classic.migrations.exceptions import MigrationLockError
+
+# SQLite has no infinite busy timeout (it is an int of ms); ~24 days.
+_MAX_LOCK_TIMEOUT = 2**31 // 1000 - 1
 
 
 def _utcnow_str() -> str:
@@ -46,6 +48,7 @@ class SQLiteBackend(Backend, driver=sqlite3):
         conn = self.driver.connect(
             f"file:{self.db_name}?cache=shared",
             uri=True,
+            **self.db_args,
         )
         conn.isolation_level = None
         return conn
@@ -98,8 +101,10 @@ class SQLiteBackend(Backend, driver=sqlite3):
         """Acquire an inter-process lock via a companion lock file.
 
         A separate connection to ``<db_name>.<migration_table>.lock`` runs
-        ``BEGIN IMMEDIATE`` with ``timeout=0``, so a concurrent migrator
-        fails immediately with :class:`MigrationLockError`. The main
+        ``BEGIN IMMEDIATE`` with the busy timeout set to :attr:`lock_timeout`
+        (``None`` waits ~24 days, effectively forever; ``0`` fails
+        immediately), so a concurrent migrator waits and then fails with
+        :class:`MigrationLockError`. The main
         database is not locked and the main connection stays in autocommit:
         each transactional migration opens its own transaction, while
         non-transactional migrations and hooks run outside transactions.
@@ -110,15 +115,14 @@ class SQLiteBackend(Backend, driver=sqlite3):
         path = self._lock_path()
         if path is None:
             return
-        conn = self.driver.connect(path, timeout=0)
+        timeout = _MAX_LOCK_TIMEOUT if self.lock_timeout is None else self.lock_timeout
+        conn = self.driver.connect(path, timeout=min(timeout, _MAX_LOCK_TIMEOUT))
         conn.isolation_level = None
         try:
             conn.execute("BEGIN IMMEDIATE")
         except self.DatabaseError as e:
             conn.close()
-            raise MigrationLockError(
-                "Could not acquire advisory lock on the database",
-            ) from e
+            raise self.lock_error() from e
         self._lock_connection = conn
 
     def release_lock(self) -> None:

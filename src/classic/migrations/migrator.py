@@ -38,7 +38,14 @@ MigrationList = list[Migration]
 
 
 class Migrator:
-    """Executes migrations against a real database via a :class:`Backend`."""
+    """Executes migrations against a real database via a :class:`Backend`.
+
+    ``db_args`` are extra keyword arguments passed to the driver's
+    ``connect()``. ``lock_timeout`` controls waiting for the advisory lock
+    on context entry: ``None`` (default) waits forever, ``0`` fails
+    immediately if the lock is held, ``N > 0`` waits up to ``N`` seconds;
+    on failure :class:`MigrationLockError` is raised.
+    """
 
     def __init__(
         self,
@@ -48,6 +55,8 @@ class Migrator:
         db_name: str | None = None,
         db_user: str | None = None,
         db_pass: str | None = None,
+        db_args: dict[str, Any] | None = None,
+        lock_timeout: float | None = None,
         migration_table: str = "migrations",
         migration_schema: str | None = None,
         versions_schema: str | None = None,
@@ -55,12 +64,16 @@ class Migrator:
         """Store connection settings; the backend is created on context entry."""
         if not driver:
             raise ValueError("driver must not be empty")
+        if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
+            raise ValueError("lock_timeout must not be negative")
         self._driver = driver
         self._db_host = db_host
         self._db_port = db_port
         self._db_name = db_name
         self._db_user = db_user
         self._db_pass = db_pass
+        self._db_args = db_args
+        self._lock_timeout = lock_timeout
         self._migration_table = migration_table
         self._migration_schema = migration_schema
         self._versions_schema = versions_schema
@@ -92,6 +105,8 @@ class Migrator:
             db_name=self._db_name,
             db_user=self._db_user,
             db_password=self._db_pass,
+            db_args=self._db_args,
+            lock_timeout=self._lock_timeout,
             migration_table=self._migration_table,
             migration_schema=self._migration_schema,
             versions_schema=self._versions_schema,

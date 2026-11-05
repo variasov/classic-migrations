@@ -15,13 +15,13 @@
 
 """Oracle backend implemented with the ``oracledb`` driver."""
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 import oracledb
 
 from classic.migrations.backends.base import Backend, lock_hash
-from classic.migrations.exceptions import MigrationLockError
 
 
 def _utcnow() -> datetime:
@@ -59,6 +59,10 @@ class _OracleCursor:
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._cursor, name)
+
+
+# DBMS_LOCK.MAXWAIT: wait forever.
+_DBMS_LOCK_MAXWAIT = 32767
 
 
 class OracleBackend(Backend, driver=oracledb):
@@ -138,15 +142,20 @@ class OracleBackend(Backend, driver=oracledb):
     def acquire_lock(self) -> None:
         """Acquire an Oracle named advisory lock via ``DBMS_LOCK.REQUEST``."""
         lock_id = lock_hash(self.migration_table) & 0x3FFFFFFF
+        # Timeout in seconds; MAXWAIT (32767) waits forever.
+        timeout = (
+            _DBMS_LOCK_MAXWAIT
+            if self.lock_timeout is None
+            else min(math.ceil(self.lock_timeout), _DBMS_LOCK_MAXWAIT)
+        )
         cursor = self.execute(
             "SELECT DBMS_LOCK.REQUEST(:1, :2, :3) FROM dual",
-            (lock_id, 6, 0),
+            (lock_id, 6, timeout),
         )
         result = cursor.fetchone()[0]
-        if result != 0:
-            raise MigrationLockError(
-                "Could not acquire advisory lock on the database",
-            )
+        # 0 = success, 4 = this session already owns the lock.
+        if result not in (0, 4):
+            raise self.lock_error()
 
     def release_lock(self) -> None:
         """Release the Oracle named advisory lock."""

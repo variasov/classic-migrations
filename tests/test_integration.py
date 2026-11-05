@@ -345,7 +345,7 @@ class TestFileDbTransactions:
     def test_second_migrator_fails_while_locked(self, tmp_path: Path) -> None:
         db_file = tmp_path / "db.sqlite"
         first = Migrator(driver="sqlite3", db_name=str(db_file))
-        second = Migrator(driver="sqlite3", db_name=str(db_file))
+        second = Migrator(driver="sqlite3", db_name=str(db_file), lock_timeout=0)
 
         with first, pytest.raises(MigrationLockError), second:
             pass
@@ -355,7 +355,7 @@ class TestFileDbTransactions:
     def test_failed_lock_does_not_leak_connection(self, tmp_path: Path) -> None:
         db_file = tmp_path / "db.sqlite"
         first = Migrator(driver="sqlite3", db_name=str(db_file))
-        second = Migrator(driver="sqlite3", db_name=str(db_file))
+        second = Migrator(driver="sqlite3", db_name=str(db_file), lock_timeout=0)
 
         with first:
             with warnings.catch_warnings(record=True) as caught:

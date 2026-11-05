@@ -192,6 +192,13 @@ class CLI:
             port = settings.DATABASE_PORT
         except ValueError as e:
             raise _ConfigError(f"DATABASE_PORT must be an integer ({e})") from e
+        message = "MIGRATIONS_LOCK_TIMEOUT must be a non-negative number"
+        try:
+            lock_timeout = settings.MIGRATIONS_LOCK_TIMEOUT
+        except ValueError as e:
+            raise _ConfigError(f"{message} ({e})") from e
+        if lock_timeout is not None and not lock_timeout >= 0:
+            raise _ConfigError(f"{message} (got {lock_timeout:g})")
         return Migrator(
             driver=settings.DATABASE_DRIVER,
             db_host=settings.DATABASE_HOST,
@@ -199,6 +206,7 @@ class CLI:
             db_name=settings.DATABASE_NAME,
             db_user=settings.DATABASE_USER,
             db_pass=settings.DATABASE_PASSWORD,
+            lock_timeout=lock_timeout,
             migration_table=settings.MIGRATIONS_TABLE,
             migration_schema=settings.MIGRATIONS_SCHEMA,
             versions_schema=settings.OLD_MIGRATIONS_SCHEMA,

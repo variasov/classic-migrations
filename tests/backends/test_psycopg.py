@@ -1,3 +1,5 @@
+import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
 
@@ -6,6 +8,7 @@ import pytest
 
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.psycopg import PsycopgBackend
+from classic.migrations.exceptions import MigrationLockError
 from tests.conftest import get_credentials
 
 _env = get_credentials("PG_")
@@ -315,3 +318,63 @@ class TestPsycopgLifecycle:
                 self._drop_all(db)
         finally:
             pass
+
+
+def _second_backend() -> PsycopgBackend:
+    return PsycopgBackend(
+        db_host=_env_value("host"),
+        db_port=int(_env_value("port")),
+        db_name=_env_value("name"),
+        db_user=_env_value("user"),
+        db_password=_env_value("password"),
+        migration_table="migrations_test",
+        lock_timeout=0,
+    )
+
+
+def test_lock_second_backend_fails_immediately(backend: PsycopgBackend) -> None:
+    second = _second_backend()
+    backend.acquire_lock()
+    try:
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError) as exc_info:
+            second.acquire_lock()
+        assert time.monotonic() - start < 2
+        assert "within" not in str(exc_info.value)
+        backend.release_lock()
+        second.acquire_lock()
+        second.release_lock()
+    finally:
+        second.close()
+
+
+def test_lock_timeout_waits_then_fails(backend: PsycopgBackend) -> None:
+    second = _second_backend()
+    second.lock_timeout = 1.2
+    backend.acquire_lock()
+    try:
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError, match=r"within 1.2 s"):
+            second.acquire_lock()
+        assert time.monotonic() - start >= 1.0
+    finally:
+        backend.release_lock()
+        second.close()
+
+
+def test_lock_default_waits_until_released(backend: PsycopgBackend) -> None:
+    second = _second_backend()
+    second.lock_timeout = None
+    backend.acquire_lock()
+    # The lock is session-bound; release it from a timer thread.
+    timer = threading.Timer(0.5, backend.release_lock)
+    try:
+        timer.start()
+        start = time.monotonic()
+        second.acquire_lock()
+        assert time.monotonic() - start >= 0.3
+        second.release_lock()
+    finally:
+        timer.cancel()
+        timer.join()
+        second.close()

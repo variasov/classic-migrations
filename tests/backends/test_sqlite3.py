@@ -1,6 +1,9 @@
 import sqlite3
+import threading
+import time
 from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -158,17 +161,78 @@ def test_lock_uses_companion_file(tmp_path: Path) -> None:
 def test_lock_second_backend_fails_immediately(tmp_path: Path) -> None:
     db_file = str(tmp_path / "db.sqlite")
     first = SQLiteBackend(db_name=db_file)
-    second = SQLiteBackend(db_name=db_file)
+    second = SQLiteBackend(db_name=db_file, lock_timeout=0)
     try:
         first.acquire_lock()
-        with pytest.raises(MigrationLockError):
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError) as exc_info:
             second.acquire_lock()
+        assert time.monotonic() - start < 0.2
+        assert str(exc_info.value) == "Could not acquire advisory lock on the database"
         first.release_lock()
         second.acquire_lock()
         second.release_lock()
     finally:
         first.close()
         second.close()
+
+
+def test_lock_timeout_waits_then_fails(tmp_path: Path) -> None:
+    db_file = str(tmp_path / "db.sqlite")
+    first = SQLiteBackend(db_name=db_file)
+    second = SQLiteBackend(db_name=db_file, lock_timeout=0.3)
+    try:
+        first.acquire_lock()
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError, match=r"within 0.3 s"):
+            second.acquire_lock()
+        assert time.monotonic() - start >= 0.25
+    finally:
+        first.release_lock()
+        first.close()
+        second.close()
+
+
+def test_lock_default_waits_until_released(tmp_path: Path) -> None:
+    db_file = str(tmp_path / "db.sqlite")
+    lock_path = f"{db_file}.migrations.lock"
+    holder = sqlite3.connect(lock_path, isolation_level=None, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+
+    def release() -> None:
+        holder.rollback()
+        holder.close()
+
+    second = SQLiteBackend(db_name=db_file)
+    assert second.lock_timeout is None
+    timer = threading.Timer(0.3, release)
+    try:
+        timer.start()
+        start = time.monotonic()
+        second.acquire_lock()
+        assert time.monotonic() - start >= 0.2
+        second.release_lock()
+    finally:
+        timer.join()
+        second.close()
+
+
+def test_negative_lock_timeout_raises() -> None:
+    with pytest.raises(ValueError, match="lock_timeout"):
+        SQLiteBackend(db_name=":memory:", lock_timeout=-1)
+
+
+def test_db_args_passed_to_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = MagicMock(wraps=sqlite3.connect)
+    monkeypatch.setattr(sqlite3, "connect", spy)
+    b = SQLiteBackend(
+        db_name=str(tmp_path / "db.sqlite"),
+        db_args={"cached_statements": 7},
+    )
+    b.close()
+    assert spy.call_args.kwargs["cached_statements"] == 7
 
 
 def test_lock_does_not_block_other_connections(tmp_path: Path) -> None:
@@ -304,5 +368,13 @@ def test_migration_schema_ignored() -> None:
         b.ensure_migration_table()
         assert "migrations" in b.list_tables()
         assert "foo" not in b.list_tables()
+    finally:
+        b.close()
+
+
+def test_infinite_lock_timeout_means_wait_forever() -> None:
+    b = SQLiteBackend(db_name=":memory:", lock_timeout=float("inf"))
+    try:
+        assert b.lock_timeout is None
     finally:
         b.close()

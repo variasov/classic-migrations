@@ -111,6 +111,14 @@ class Settings:
         return value or None
 
     @property
+    def MIGRATIONS_LOCK_TIMEOUT(self) -> float | None:
+        """Return the lock wait timeout in seconds; ``None`` waits forever."""
+        value = self._environ.get("MIGRATIONS_LOCK_TIMEOUT")
+        if not value:
+            return None
+        return float(value)
+
+    @property
     def OLD_MIGRATIONS_SCHEMA(self) -> str | None:
         """Return the schema of the legacy ``versions`` table, if supplied."""
         value = self._environ.get("OLD_MIGRATIONS_SCHEMA")

@@ -76,6 +76,7 @@ class FakeBackend(Backend, driver=_FakeDriver):
         self.db_user = kwargs.get("db_user")
         self.db_password = kwargs.get("db_password")
         self.db_args = kwargs.get("db_args", {})
+        self.lock_timeout = kwargs.get("lock_timeout")
         self.migration_table = kwargs.get("migration_table", "migrations")
         self.versions_table = "versions"
         self._in_transaction = False

@@ -54,3 +54,40 @@ class TestSourcesList:
         env_file.write_text("SOURCES=fromfile\n", encoding="utf-8")
         monkeypatch.setenv("SOURCES", "fromenv")
         assert Settings(env_file=env_file).sources_list == ["fromenv"]
+
+
+class TestLockTimeout:
+    def _settings(self, tmp_path: Path) -> Settings:
+        return Settings(env_file=tmp_path / "none.env")
+
+    def test_missing_is_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.delenv("MIGRATIONS_LOCK_TIMEOUT", raising=False)
+        assert self._settings(tmp_path).MIGRATIONS_LOCK_TIMEOUT is None
+
+    def test_empty_is_none(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", "")
+        assert self._settings(tmp_path).MIGRATIONS_LOCK_TIMEOUT is None
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"), [("0", 0.0), ("2.5", 2.5), ("30", 30.0)]
+    )
+    def test_parsed_as_float(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        raw: str,
+        expected: float,
+    ) -> None:
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", raw)
+        assert expected == self._settings(tmp_path).MIGRATIONS_LOCK_TIMEOUT
+
+    def test_invalid_raises(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", "abc")
+        with pytest.raises(ValueError):
+            self._settings(tmp_path).MIGRATIONS_LOCK_TIMEOUT  # noqa: B018
