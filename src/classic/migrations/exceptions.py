@@ -38,3 +38,7 @@ class NoMigration(Exception):
 
 class MigrationLockError(Exception):
     """Could not acquire an advisory lock on the database."""
+
+
+class MigrationPending(Exception):
+    """A migration is left PENDING by a run that failed midway."""

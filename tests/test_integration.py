@@ -10,7 +10,12 @@ from typing import Any
 
 import pytest
 
-from classic.migrations import MigrationLockError, MigrationsCollection, Migrator
+from classic.migrations import (
+    MigrationLockError,
+    MigrationPending,
+    MigrationsCollection,
+    Migrator,
+)
 
 
 def write_file(path: Path, content: str) -> Path:
@@ -383,3 +388,94 @@ class TestFileDbTransactions:
                 assert other.execute("SELECT id FROM foo").fetchall() == [(7,)]
             finally:
                 other.close()
+
+
+class TestPendingRecovery:
+    """A non-transactional migration failing midway leaves a PENDING record."""
+
+    @staticmethod
+    def _fail_midway(source: Path, db_file: Path) -> MigrationsCollection:
+        write_file(
+            source / "0001.big.sql",
+            "-- transactional: false\n"
+            "CREATE TABLE big(id INTEGER);\n"
+            "INSERT INTO nonexistent VALUES (1);\n",
+        )
+        write_file(source / "0002.next.sql", "CREATE TABLE nxt(id INTEGER);\n")
+        migrations = MigrationsCollection(str(source))
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with pytest.raises(sqlite3.OperationalError), db:
+            _run_apply(db, migrations)
+        return migrations
+
+    def test_failure_leaves_pending_and_blocks_next_run(
+        self,
+        source: Path,
+        tmp_path: Path,
+    ) -> None:
+        db_file = tmp_path / "db.sqlite"
+        migrations = self._fail_midway(source, db_file)
+
+        assert _query(db_file, "SELECT migration_id, status FROM migrations") == [
+            ("0001.big", "PENDING"),
+        ]
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with db:
+            history = db.history()
+            with pytest.raises(MigrationPending, match=r"0001\.big"):
+                migrations.to_apply(history)
+            with pytest.raises(MigrationPending, match=r"0001\.big"):
+                migrations.to_rollback(history)
+        assert MigrationsCollection.pending_ids(history) == {"0001.big"}
+
+    def test_apply_fake_marks_applied_then_apply_continues(
+        self,
+        source: Path,
+        tmp_path: Path,
+    ) -> None:
+        db_file = tmp_path / "db.sqlite"
+        migrations = self._fail_midway(source, db_file)
+
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with db:
+            hooks, to_mark = migrations.to_apply(
+                db.history(),
+                target="0001.big",
+                fake=True,
+            )
+            assert [m.id for m in to_mark] == ["0001.big"]
+            db.apply(to_mark, hooks, fake=True)
+        rows = _query(db_file, "SELECT migration_id, status FROM migrations")
+        assert rows == [("0001.big", "PENDING"), ("0001.big", "APPLIED")]
+
+        with db:
+            _run_apply(db, migrations)
+        with db:
+            history = db.history()
+        assert MigrationsCollection.applied_ids(history) == {"0001.big", "0002.next"}
+        assert MigrationsCollection.pending_ids(history) == set()
+
+    def test_rollback_fake_marks_rolled_back(
+        self,
+        source: Path,
+        tmp_path: Path,
+    ) -> None:
+        db_file = tmp_path / "db.sqlite"
+        migrations = self._fail_midway(source, db_file)
+
+        db = Migrator(driver="sqlite3", db_name=str(db_file))
+        with db:
+            hooks, to_mark = migrations.to_rollback(
+                db.history(),
+                target="0001.big",
+                fake=True,
+            )
+            assert [m.id for m in to_mark] == ["0001.big"]
+            db.rollback(to_mark, hooks, fake=True)
+        with db:
+            history = db.history()
+            statuses = MigrationsCollection.statuses(history)
+            # Not pending anymore: a plain apply is not blocked.
+            _, to_apply = migrations.to_apply(history)
+        assert statuses == {"0001.big": "ROLLED_BACK"}
+        assert [m.id for m in to_apply] == ["0001.big", "0002.next"]

@@ -262,8 +262,8 @@ class Migrator:
     def _rollback_one(self, migration: Migration) -> None:
         backend = self._require_backend()
         if not migration.rollback_statements:
-            logger.debug(
-                "Rolling back %s: no rollback file, marking only",
+            logger.warning(
+                "Migration %s has no rollback file; only marking it as rolled back",
                 migration.id,
             )
             backend.mark(migration.id, STATUS_ROLLED_BACK)

@@ -484,6 +484,22 @@ class TestRollback:
         assert backend.applied_list == []
         assert backend.events[-1][2] == "ROLLED_BACK"
 
+    def test_rollback_without_rollback_statements_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        migrator = Migrator(driver="fake")
+        m1 = _make_migration("0001.a")
+        m1.rollback_statements = []
+
+        with caplog.at_level(logging.DEBUG, logger="classic.migrations"), migrator:
+            migrator.rollback([m1], {})
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert [r.getMessage() for r in warnings] == [
+            "Migration 0001.a has no rollback file; only marking it as rolled back",
+        ]
+
 
 class TestLifecycle:
     def test_close_closes_backend(self) -> None:

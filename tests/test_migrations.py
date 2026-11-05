@@ -443,6 +443,229 @@ class TestToRollback:
         assert [hook.name for hook in hooks["post-rollback"]] == ["post-rollback"]
 
 
+def make_events(*events: tuple[str, str]) -> list[tuple[str, str, str]]:
+    """Build history rows from (migration_id, status) pairs."""
+    return [
+        (migration_id, f"2020-01-01 00:00:{i:02d}", status)
+        for i, (migration_id, status) in enumerate(events)
+    ]
+
+
+class TestStatuses:
+    def test_statuses_latest_event_wins(self) -> None:
+        history = make_events(
+            ("0001.a", "PENDING"),
+            ("0001.a", "APPLIED"),
+            ("0002.b", "APPLIED"),
+            ("0002.b", "PENDING"),
+        )
+
+        assert MigrationsCollection.statuses(history) == {
+            "0001.a": "APPLIED",
+            "0002.b": "PENDING",
+        }
+
+    def test_statuses_empty(self) -> None:
+        assert MigrationsCollection.statuses([]) == {}
+
+    def test_pending_ids(self) -> None:
+        history = make_events(
+            ("0001.a", "APPLIED"),
+            ("0002.b", "PENDING"),
+            ("0003.c", "PENDING"),
+            ("0003.c", "APPLIED"),
+            ("0004.d", "APPLIED"),
+            ("0004.d", "PENDING"),
+            ("0004.d", "ROLLED_BACK"),
+        )
+
+        assert MigrationsCollection.pending_ids(history) == {"0002.b"}
+
+    def test_applied_ids_ignores_pending(self) -> None:
+        history = make_events(
+            ("0001.a", "APPLIED"),
+            ("0002.b", "PENDING"),
+            ("0001.a", "PENDING"),
+            ("0003.c", "APPLIED"),
+        )
+
+        assert MigrationsCollection.applied_ids(history) == {"0003.c"}
+
+
+class TestPending:
+    def test_to_apply_raises_on_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_apply(make_events(("0001.a", "PENDING")))
+
+    def test_to_rollback_raises_on_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_rollback(
+                make_events(("0001.a", "APPLIED"), ("0002.b", "PENDING")),
+            )
+
+    def test_to_apply_raises_with_target(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_apply(
+                make_events(("0001.a", "PENDING")),
+                target="0002.b",
+            )
+
+    def test_to_rollback_raises_with_target(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_rollback(
+                make_events(("0001.a", "APPLIED"), ("0002.b", "PENDING")),
+                target="0001.a",
+            )
+
+    def test_blocks_even_if_unrelated_to_target(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "PENDING"))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_apply(history, target="0002.b")
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_rollback(history, target="0002.b")
+
+    def test_blocks_if_pending_id_is_not_in_collection(self, source: Path) -> None:
+        write_graph(source, {"0001.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("9999.gone", "PENDING"))
+
+        with pytest.raises(exceptions.MigrationPending, match=r"9999\.gone"):
+            collection.to_apply(history)
+        with pytest.raises(exceptions.MigrationPending, match=r"9999\.gone"):
+            collection.to_rollback(history)
+        with pytest.raises(exceptions.MigrationPending, match="file is missing"):
+            collection.to_apply(history)
+
+    def test_pending_after_applied_blocks(self, source: Path) -> None:
+        # Rollback of an applied migration failed midway.
+        write_graph(source, {"0001.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "APPLIED"), ("0001.a", "PENDING"))
+
+        with pytest.raises(exceptions.MigrationPending):
+            collection.to_rollback(history)
+
+    def test_resolved_pending_does_not_block(self, source: Path) -> None:
+        write_graph(source, {"0001.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "PENDING"), ("0001.a", "APPLIED"))
+
+        _, to_apply = collection.to_apply(history)
+        _, to_rollback = collection.to_rollback(history)
+
+        assert to_apply == []
+        assert [m.id for m in to_rollback] == ["0001.a"]
+
+    def test_message_has_id_and_both_commands(self, source: Path) -> None:
+        write_graph(source, {"0003.big": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        with pytest.raises(exceptions.MigrationPending) as exc_info:
+            collection.to_apply(make_events(("0003.big", "PENDING")))
+
+        assert str(exc_info.value) == (
+            "Migration '0003.big' is PENDING: a previous run failed midway. "
+            "Fix the database manually, then mark it with "
+            '"migrations apply --fake 0003.big" '
+            'or "migrations rollback --fake 0003.big".'
+        )
+
+    def test_message_lists_all_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "", "0003.c": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0002.b", "PENDING"), ("0001.a", "PENDING"))
+
+        with pytest.raises(exceptions.MigrationPending) as exc_info:
+            collection.to_rollback(history)
+
+        message = str(exc_info.value)
+        for migration_id in ("0001.a", "0002.b"):
+            assert f"migrations apply --fake {migration_id}" in message
+            assert f"migrations rollback --fake {migration_id}" in message
+        assert "0003.c" not in message
+
+    def test_unknown_target_checked_before_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "PENDING"))
+
+        with pytest.raises(exceptions.NoMigration):
+            collection.to_apply(history, target="9999.nope")
+        with pytest.raises(exceptions.NoMigration):
+            collection.to_rollback(history, target="9999.nope")
+
+
+class TestFake:
+    def test_to_apply_fake_includes_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "APPLIED"), ("0002.b", "PENDING"))
+
+        _, migrations = collection.to_apply(history, fake=True)
+
+        assert [m.id for m in migrations] == ["0002.b"]
+
+    def test_to_apply_fake_target_closure(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a", "0003.c": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "APPLIED"), ("0002.b", "PENDING"))
+
+        _, migrations = collection.to_apply(history, target="0002.b", fake=True)
+
+        assert [m.id for m in migrations] == ["0002.b"]
+
+    def test_to_apply_fake_ignores_unknown_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": ""})
+        collection = MigrationsCollection(sources=str(source))
+
+        _, migrations = collection.to_apply(
+            make_events(("9999.gone", "PENDING")),
+            target="0001.a",
+            fake=True,
+        )
+
+        assert [m.id for m in migrations] == ["0001.a"]
+
+    def test_to_rollback_fake_includes_pending(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a"})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(("0001.a", "APPLIED"), ("0002.b", "PENDING"))
+
+        _, migrations = collection.to_rollback(history, fake=True)
+
+        assert [m.id for m in migrations] == ["0002.b", "0001.a"]
+
+    def test_to_rollback_fake_target_closure(self, source: Path) -> None:
+        write_graph(source, {"0001.a": "", "0002.b": "0001.a", "0003.c": ""})
+        collection = MigrationsCollection(sources=str(source))
+        history = make_events(
+            ("0001.a", "APPLIED"),
+            ("0002.b", "PENDING"),
+            ("0003.c", "APPLIED"),
+        )
+
+        _, migrations = collection.to_rollback(history, target="0001.a", fake=True)
+        _, only_pending = collection.to_rollback(history, target="0002.b", fake=True)
+
+        assert [m.id for m in migrations] == ["0002.b", "0001.a"]
+        assert [m.id for m in only_pending] == ["0002.b"]
+
+
 class TestConstructor:
     def test_empty_sources_raises(self) -> None:
         with pytest.raises(ValueError):

@@ -94,7 +94,7 @@ class CLI:
         p.add_argument(
             "--history",
             action="store_true",
-            help="Show only applied migrations",
+            help="Show only applied and pending migrations",
         )
         p.set_defaults(func=self._list)
 
@@ -171,6 +171,7 @@ class CLI:
             hooks, migrations = self._collection.to_apply(
                 history,
                 target=args.migration_name,
+                fake=args.fake,
             )
             if args.plan:
                 self._print_migrations(migrations)
@@ -179,30 +180,36 @@ class CLI:
         return 0
 
     def _list(self, args: argparse.Namespace) -> int:
-        """Вывести список миграций и их статус: A — применена, U — нет."""
+        """Вывести список миграций и их статус.
+
+        A — применена, P — зависла (PENDING: предыдущий запуск упал посередине),
+        U — не применена. При ``--history`` выводятся только A и P, то есть
+        миграции, которые затронули базу.
+        """
         with self._migrator:
             history = self._migrator.history()
 
-        applied = MigrationsCollection.applied_ids(history)
+        statuses = MigrationsCollection.statuses(history)
         migrations = self._collection.list()
 
+        def letter(migration_id: str) -> str:
+            status = statuses.get(migration_id)
+            if status == "APPLIED":
+                return "A"
+            if status == "PENDING":
+                return "P"
+            return "U"
+
+        rows = [(letter(m.id), m.id, m.source_dir or "") for m in migrations]
         if args.history:
-            rows = [
-                ("A", m.id, m.source_dir or "") for m in migrations if m.id in applied
-            ]
-        else:
-            rows = [
-                ("A" if m.id in applied else "U", m.id, m.source_dir or "")
-                for m in migrations
-            ]
+            rows = [row for row in rows if row[0] in ("A", "P")]
 
         status, ids, sources = zip(*rows, strict=False) if rows else ((), (), ())
 
         if sys.stdout.isatty():
-            status = [
-                f"\033[92m{s}\033[0m" if s == "A" else f"\033[91m{s}\033[0m"
-                for s in status
-            ]
+            colors = {"A": "\033[92m", "P": "\033[93m"}
+            red = "\033[91m"
+            status = [f"{colors.get(s, red)}{s}\033[0m" for s in status]
 
         self._write_csv(
             ("STATUS", "ID", "SOURCE"),
@@ -217,6 +224,7 @@ class CLI:
             hooks, migrations = self._collection.to_rollback(
                 history,
                 target=args.migration_name,
+                fake=args.fake,
             )
             if args.plan:
                 self._print_migrations(migrations)

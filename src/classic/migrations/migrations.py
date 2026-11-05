@@ -327,15 +327,33 @@ class MigrationsCollection:
         return result
 
     @staticmethod
-    def applied_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
-        """Return the ids with an ``APPLIED`` latest status in ``history``."""
+    def statuses(history: Iterable[tuple[str, ...]]) -> dict[str, str]:
+        """Return the latest status of every migration in ``history``."""
         latest: dict[str, str] = {}
         for row in history:
             latest[row[0]] = row[2]
+        return latest
+
+    @staticmethod
+    def applied_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
+        """Return the ids with an ``APPLIED`` latest status in ``history``."""
         return {
             migration_id
-            for migration_id, status in latest.items()
+            for migration_id, status in MigrationsCollection.statuses(history).items()
             if status == "APPLIED"
+        }
+
+    @staticmethod
+    def pending_ids(history: Iterable[tuple[str, ...]]) -> set[str]:
+        """Return the ids with a ``PENDING`` latest status in ``history``.
+
+        Such a migration was started but never finished: its SQL may be
+        partially executed.
+        """
+        return {
+            migration_id
+            for migration_id, status in MigrationsCollection.statuses(history).items()
+            if status == "PENDING"
         }
 
     def list(self) -> list[Migration]:
@@ -359,6 +377,39 @@ class MigrationsCollection:
     def _check_target(self, target: str) -> None:
         if target not in {m.id for m in self.list()}:
             raise exceptions.NoMigration(f"Migration {target!r} not found")
+
+    def _check_no_pending(self, pending: set[str]) -> None:
+        """Raise ``MigrationPending`` if ``pending`` is not empty.
+
+        The message tells how to mark each migration. A migration whose file
+        is gone cannot be marked until the file is restored.
+        """
+        if not pending:
+            return
+        known = {m.id for m in self.list()}
+
+        def advice(i: str) -> str:
+            commands = (
+                f'"migrations apply --fake {i}" or "migrations rollback --fake {i}"'
+            )
+            if i in known:
+                return commands
+            return f"its file is missing: restore it, then run {commands}"
+
+        ids = sorted(pending)
+        if len(ids) == 1:
+            message = (
+                f"Migration {ids[0]!r} is PENDING: a previous run failed midway. "
+                f"Fix the database manually, then mark it with {advice(ids[0])}."
+            )
+        else:
+            listed = ", ".join(repr(i) for i in ids)
+            per_id = "; ".join(f"for {i!r}: {advice(i)}" for i in ids)
+            message = (
+                f"Migrations {listed} are PENDING: a previous run failed midway. "
+                f"Fix the database manually, then mark each of them ({per_id})."
+            )
+        raise exceptions.MigrationPending(message)
 
     def _dependencies_closure(self, target: str) -> set[str]:
         """Return ``target`` and all its transitive dependencies."""
@@ -386,6 +437,8 @@ class MigrationsCollection:
         self,
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
+        *,
+        fake: bool = False,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
         """Return hooks and the migrations that should be applied.
 
@@ -394,13 +447,23 @@ class MigrationsCollection:
         that are not yet applied; unrelated migrations are left alone. If the
         target is already applied, only its unapplied dependencies are
         returned. The order is the common topological order of ``list()``.
-        Unknown ``target`` raises ``NoMigration``.
+        Unknown ``target`` raises ``NoMigration`` (checked first).
+
+        A ``PENDING`` migration (a previous run failed midway) blocks the
+        whole run with ``MigrationPending``, even if it is unrelated to
+        ``target`` or unknown to the collection: the database state is
+        uncertain. With ``fake=True`` nothing is blocked and ``PENDING``
+        migrations count as not applied, so they get marked ``APPLIED``.
         """
         migrations = self.list()
+        history = list(history)
+        if target is not None:
+            self._check_target(target)
+        if not fake:
+            self._check_no_pending(self.pending_ids(history))
         applied = self.applied_ids(history)
         keep: set[str] | None = None
         if target is not None:
-            self._check_target(target)
             keep = self._dependencies_closure(target)
         result = [
             m
@@ -413,6 +476,8 @@ class MigrationsCollection:
         self,
         history: Iterable[tuple[str, ...]],
         target: str | None = None,
+        *,
+        fake: bool = False,
     ) -> tuple[dict[str, list[Hook]], list[Migration]]:
         """Return hooks and the migrations that should be rolled back.
 
@@ -421,17 +486,28 @@ class MigrationsCollection:
         migrations transitively depending on it; unrelated migrations are left
         alone. If the target itself is not applied, its applied dependents are
         still returned. The order is the reverse of the topological order of
-        ``list()``. Unknown ``target`` raises ``NoMigration``.
+        ``list()``. Unknown ``target`` raises ``NoMigration`` (checked first).
+
+        A ``PENDING`` migration blocks the whole run with ``MigrationPending``
+        (see ``to_apply``). With ``fake=True`` nothing is blocked and
+        ``PENDING`` migrations are rolled back like applied ones, so they get
+        marked ``ROLLED_BACK``.
         """
         migrations = self.list()
-        applied = self.applied_ids(history)
-        keep: set[str] | None = None
+        history = list(history)
         if target is not None:
             self._check_target(target)
+        if not fake:
+            self._check_no_pending(self.pending_ids(history))
+        rollbackable = self.applied_ids(history)
+        if fake:
+            rollbackable |= self.pending_ids(history)
+        keep: set[str] | None = None
+        if target is not None:
             keep = self._dependents_closure(target)
         result = [
             m
             for m in reversed(migrations)
-            if m.id in applied and (keep is None or m.id in keep)
+            if m.id in rollbackable and (keep is None or m.id in keep)
         ]
         return self._get_hooks(), result

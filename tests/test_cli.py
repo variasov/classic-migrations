@@ -154,7 +154,7 @@ class TestCmdApply:
         result = cli._apply(args)
 
         assert result == 0
-        mock_collection.to_apply.assert_called_once_with([], target=None)
+        mock_collection.to_apply.assert_called_once_with([], target=None, fake=False)
         mock_migrator.apply.assert_called_once_with([], {}, fake=False)
 
     def test_opens_and_closes_migrator_context(
@@ -177,7 +177,11 @@ class TestCmdApply:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         cli._apply(args)
 
-        mock_collection.to_apply.assert_called_once_with([], target="0001.init")
+        mock_collection.to_apply.assert_called_once_with(
+            [],
+            target="0001.init",
+            fake=True,
+        )
         mock_migrator.apply.assert_called_once_with([], {}, fake=True)
 
     def test_plan_does_not_apply(
@@ -190,7 +194,7 @@ class TestCmdApply:
         args = argparse.Namespace(migration_name=None, fake=False, plan=True)
         cli._apply(args)
 
-        mock_collection.to_apply.assert_called_once_with([], target=None)
+        mock_collection.to_apply.assert_called_once_with([], target=None, fake=False)
         mock_migrator.apply.assert_not_called()
         assert "ID,SOURCE" in capsys.readouterr().out
 
@@ -206,7 +210,7 @@ class TestCmdRollback:
         result = cli._rollback(args)
 
         assert result == 0
-        mock_collection.to_rollback.assert_called_once_with([], target=None)
+        mock_collection.to_rollback.assert_called_once_with([], target=None, fake=False)
         mock_migrator.rollback.assert_called_once_with([], {}, fake=False)
 
     def test_opens_and_closes_migrator_context(
@@ -229,7 +233,11 @@ class TestCmdRollback:
         args = argparse.Namespace(migration_name="0001.init", fake=True, plan=False)
         cli._rollback(args)
 
-        mock_collection.to_rollback.assert_called_once_with([], target="0001.init")
+        mock_collection.to_rollback.assert_called_once_with(
+            [],
+            target="0001.init",
+            fake=True,
+        )
         mock_migrator.rollback.assert_called_once_with([], {}, fake=True)
 
     def test_plan_does_not_rollback(
@@ -242,7 +250,7 @@ class TestCmdRollback:
         args = argparse.Namespace(migration_name=None, fake=False, plan=True)
         cli._rollback(args)
 
-        mock_collection.to_rollback.assert_called_once_with([], target=None)
+        mock_collection.to_rollback.assert_called_once_with([], target=None, fake=False)
         mock_migrator.rollback.assert_not_called()
         assert "ID,SOURCE" in capsys.readouterr().out
 
@@ -320,6 +328,89 @@ class TestCmdList:
         cli._list(args)
 
         assert "U,0001.a" in capsys.readouterr().out
+
+    def test_pending_migration_shown_as_p(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
+            ("0002.b", "2020-01-02 00:00:00", "PENDING"),
+        ]
+        mock_collection.list.return_value = [
+            _make_migration("0001.a"),
+            _make_migration("0002.b"),
+            _make_migration("0003.c"),
+        ]
+        cli._list(argparse.Namespace(history=False))
+
+        output = capsys.readouterr().out
+        assert "A,0001.a" in output
+        assert "P,0002.b" in output
+        assert "U,0003.c" in output
+
+    def test_pending_after_rollback_is_p_not_u(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
+            ("0001.a", "2020-01-02 00:00:00", "PENDING"),
+        ]
+        mock_collection.list.return_value = [_make_migration("0001.a")]
+        cli._list(argparse.Namespace(history=False))
+
+        assert "P,0001.a" in capsys.readouterr().out
+
+    def test_history_flag_shows_applied_and_pending(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "APPLIED"),
+            ("0002.b", "2020-01-02 00:00:00", "PENDING"),
+            ("0003.c", "2020-01-03 00:00:00", "APPLIED"),
+            ("0003.c", "2020-01-04 00:00:00", "ROLLED_BACK"),
+        ]
+        mock_collection.list.return_value = [
+            _make_migration("0001.a"),
+            _make_migration("0002.b"),
+            _make_migration("0003.c"),
+            _make_migration("0004.d"),
+        ]
+        cli._list(argparse.Namespace(history=True))
+
+        output = capsys.readouterr().out
+        assert "A,0001.a" in output
+        assert "P,0002.b" in output
+        assert "0003.c" not in output
+        assert "0004.d" not in output
+
+    def test_colors_pending_yellow_on_tty(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        mock_migrator.history.return_value = [
+            ("0001.a", "2020-01-01 00:00:00", "PENDING"),
+        ]
+        mock_collection.list.return_value = [_make_migration("0001.a")]
+        fake_stdout = _FakeTty()
+        monkeypatch.setattr(sys, "stdout", fake_stdout)
+        cli._list(argparse.Namespace(history=False))
+
+        assert "\033[93mP\033[0m" in fake_stdout.getvalue()
 
     def test_empty_list_prints_header_only(
         self,

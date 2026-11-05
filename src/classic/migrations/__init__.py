@@ -22,6 +22,7 @@ from .exceptions import (
     InvalidArgument,
     MigrationConflict,
     MigrationLockError,
+    MigrationPending,
     NoMigration,
 )
 from .migrations import MigrationsCollection
@@ -37,6 +38,7 @@ __all__ = (
     "InvalidArgument",
     "MigrationConflict",
     "MigrationLockError",
+    "MigrationPending",
     "MigrationsCollection",
     "Migrator",
     "NoMigration",
