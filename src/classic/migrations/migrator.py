@@ -14,8 +14,14 @@
 
 """The :class:`Migrator` that executes migrations through a backend."""
 
+import sys
 from logging import getLogger
 from typing import Any
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 from classic.migrations.backends.base import (
     STATUS_APPLIED,
@@ -24,7 +30,6 @@ from classic.migrations.backends.base import (
     Backend,
 )
 from classic.migrations.migrations import Hook, Migration
-from typing_extensions import Self
 
 logger = getLogger("classic.migrations")
 
@@ -33,7 +38,14 @@ MigrationList = list[Migration]
 
 
 class Migrator:
-    """Executes migrations against a real database via a :class:`Backend`."""
+    """Executes migrations against a real database via a :class:`Backend`.
+
+    ``db_args`` are extra keyword arguments passed to the driver's
+    ``connect()``. ``lock_timeout`` controls waiting for the advisory lock
+    on context entry: ``None`` (default) waits forever, ``0`` fails
+    immediately if the lock is held, ``N > 0`` waits up to ``N`` seconds;
+    on failure :class:`MigrationLockError` is raised.
+    """
 
     def __init__(
         self,
@@ -43,6 +55,8 @@ class Migrator:
         db_name: str | None = None,
         db_user: str | None = None,
         db_pass: str | None = None,
+        db_args: dict[str, Any] | None = None,
+        lock_timeout: float | None = None,
         migration_table: str = "migrations",
         migration_schema: str | None = None,
         versions_schema: str | None = None,
@@ -50,12 +64,16 @@ class Migrator:
         """Store connection settings; the backend is created on context entry."""
         if not driver:
             raise ValueError("driver must not be empty")
+        if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
+            raise ValueError("lock_timeout must not be negative")
         self._driver = driver
         self._db_host = db_host
         self._db_port = db_port
         self._db_name = db_name
         self._db_user = db_user
         self._db_pass = db_pass
+        self._db_args = db_args
+        self._lock_timeout = lock_timeout
         self._migration_table = migration_table
         self._migration_schema = migration_schema
         self._versions_schema = versions_schema
@@ -81,33 +99,68 @@ class Migrator:
         """Connect and acquire a lock on the database."""
         logger.debug("Connecting to %s database %s", self._driver, self._db_name)
         backend_class = Backend.get_implementation(self._driver)
-        self._backend = backend_class(
+        backend = backend_class(
             db_host=self._db_host,
             db_port=self._db_port,
             db_name=self._db_name,
             db_user=self._db_user,
             db_password=self._db_pass,
+            db_args=self._db_args,
+            lock_timeout=self._lock_timeout,
             migration_table=self._migration_table,
             migration_schema=self._migration_schema,
             versions_schema=self._versions_schema,
         )
-        self._backend.acquire_lock()
+        try:
+            backend.acquire_lock()
+        except BaseException:
+            # Do not leak the connection; never mask the original error.
+            try:
+                backend.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close connection after lock failure",
+                    exc_info=True,
+                )
+            raise
+        self._backend = backend
         logger.debug("Advisory lock acquired via %s", backend_class.__name__)
         return self
 
-    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+    def __exit__(self, exc_type: object, exc_value: object, _traceback: object) -> None:
         """Rollback on error, release the lock and close the connection.
 
-        ``release_lock`` commits the open lock transaction on backends where
-        the lock is the transaction itself (SQLite); on the other backends
-        it releases the session-level advisory lock.
+        ``release_lock`` releases the advisory lock (a session-level lock,
+        or a companion lock file on SQLite); it does not commit anything.
+        The connection is always closed and the backend forgotten. If the
+        body raised, errors from cleanup are logged and do not replace the
+        original exception.
         """
-        if self._backend is not None:
-            if exc_type is not None:
-                logger.warning("Rolling back transaction after error: %s", exc_value)
-                self._backend.rollback()
-            self._backend.release_lock()
-        self.close()
+        backend = self._backend
+        if backend is None:
+            return
+        failed = exc_type is not None
+        try:
+            if failed:
+                logger.debug("Rolling back transaction after error: %s", exc_value)
+                try:
+                    backend.rollback()
+                except Exception:
+                    logger.warning("Rollback failed", exc_info=True)
+            try:
+                backend.release_lock()
+            except Exception:
+                if not failed:
+                    raise
+                logger.warning("Releasing the lock failed", exc_info=True)
+        finally:
+            self._backend = None
+            try:
+                backend.close()
+            except Exception:
+                if not failed:
+                    raise
+                logger.warning("Closing the connection failed", exc_info=True)
 
     def history(self) -> list[tuple[Any, ...]]:
         """Return the migration history event log.
@@ -119,7 +172,6 @@ class Migrator:
             "Reading migration history from table %r",
             backend.migration_table,
         )
-        backend.ensure_migration_table()
         rows = backend.migration_history()
         logger.debug("Read %d history event(s)", len(rows))
         return rows
@@ -225,8 +277,8 @@ class Migrator:
     def _rollback_one(self, migration: Migration) -> None:
         backend = self._require_backend()
         if not migration.rollback_statements:
-            logger.debug(
-                "Rolling back %s: no rollback file, marking only",
+            logger.warning(
+                "Migration %s has no rollback file; only marking it as rolled back",
                 migration.id,
             )
             backend.mark(migration.id, STATUS_ROLLED_BACK)
@@ -262,7 +314,9 @@ class Migrator:
         for hook in hooks:
             hook.load()
             if not hook.statements:
-                logger.debug("Skipping empty hook %s (%s)", hook.name, hook.path)
+                logger.debug(
+                    "Skipping empty hook %s (%s)", hook.name, hook.path
+                )  # pragma: no mutate
                 continue
             logger.debug(
                 "Running hook %s (%s): %d statement(s)",

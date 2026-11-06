@@ -15,12 +15,13 @@
 
 """Oracle backend implemented with the ``oracledb`` driver."""
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 import oracledb
+
 from classic.migrations.backends.base import Backend, lock_hash
-from classic.migrations.exceptions import MigrationLockError
 
 
 def _utcnow() -> datetime:
@@ -60,6 +61,10 @@ class _OracleCursor:
         return getattr(self._cursor, name)
 
 
+# DBMS_LOCK.MAXWAIT: wait forever.
+_DBMS_LOCK_MAXWAIT = 32767
+
+
 class OracleBackend(Backend, driver=oracledb):
     """Oracle migration backend using the ``oracledb`` driver (thin mode)."""
 
@@ -79,7 +84,9 @@ class OracleBackend(Backend, driver=oracledb):
         if self.db_password is not None:
             kwargs["password"] = self.db_password
         kwargs.update(self.db_args)
-        return self.driver.connect(**kwargs)
+        conn = self.driver.connect(**kwargs)
+        conn.autocommit = True
+        return conn
 
     def cursor(self) -> Any:
         """Return a cursor that tolerates a trailing SQL terminator."""
@@ -137,15 +144,20 @@ class OracleBackend(Backend, driver=oracledb):
     def acquire_lock(self) -> None:
         """Acquire an Oracle named advisory lock via ``DBMS_LOCK.REQUEST``."""
         lock_id = lock_hash(self.migration_table) & 0x3FFFFFFF
+        # Timeout in seconds; MAXWAIT (32767) waits forever.
+        timeout = (
+            _DBMS_LOCK_MAXWAIT
+            if self.lock_timeout is None
+            else min(math.ceil(self.lock_timeout), _DBMS_LOCK_MAXWAIT)
+        )
         cursor = self.execute(
             "SELECT DBMS_LOCK.REQUEST(:1, :2, :3) FROM dual",
-            (lock_id, 6, 0),
+            (lock_id, 6, timeout),
         )
         result = cursor.fetchone()[0]
-        if result != 0:
-            raise MigrationLockError(
-                "Could not acquire advisory lock on the database",
-            )
+        # 0 = success, 4 = this session already owns the lock.
+        if result not in (0, 4):
+            raise self.lock_error()
 
     def release_lock(self) -> None:
         """Release the Oracle named advisory lock."""
@@ -153,15 +165,23 @@ class OracleBackend(Backend, driver=oracledb):
         self.execute("SELECT DBMS_LOCK.RELEASE(:1) FROM dual", (lock_id,))
 
     def begin(self) -> None:
-        """Begin an implicit transaction (no SQL required in Oracle)."""
+        """Begin a transaction by disabling autocommit.
+
+        The migration statements and history marks are committed together by
+        :meth:`commit`; with autocommit on, each statement would commit
+        immediately.
+        """
+        self.connection.autocommit = False
         self._in_transaction = True
 
     def commit(self) -> None:
-        """Commit the current transaction."""
+        """Commit the current transaction and restore autocommit."""
         self.connection.commit()
+        self.connection.autocommit = True
         self._in_transaction = False
 
     def rollback(self) -> None:
-        """Rollback the current transaction."""
+        """Rollback the current transaction and restore autocommit."""
         self.connection.rollback()
+        self.connection.autocommit = True
         self._in_transaction = False

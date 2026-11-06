@@ -15,12 +15,12 @@
 
 """PostgreSQL backend implemented with the ``psycopg`` driver."""
 
-from collections.abc import Generator
-from contextlib import contextmanager
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 import psycopg
+
 from classic.migrations.backends.base import Backend, lock_hash
 
 
@@ -106,11 +106,29 @@ class PsycopgBackend(Backend, driver=psycopg):
         )
 
     def acquire_lock(self) -> None:
-        """Acquire a PostgreSQL advisory lock for this migration table."""
+        """Acquire a PostgreSQL advisory lock for this migration table.
+
+        ``lock_timeout=None`` blocks in ``pg_advisory_lock``; otherwise
+        ``pg_try_advisory_lock`` is polled until the deadline.
+        """
         lock_id = lock_hash(self.migration_table)
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
-        self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
+        if self.lock_timeout is None:
+            self.execute("SELECT pg_advisory_lock(%s, %s)", (key1, key2))
+            return
+        deadline = time.monotonic() + self.lock_timeout
+        while True:
+            cursor = self.execute(
+                "SELECT pg_try_advisory_lock(%s, %s)",
+                (key1, key2),
+            )
+            if cursor.fetchone()[0]:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise self.lock_error()
+            time.sleep(min(0.1, remaining))
 
     def release_lock(self) -> None:
         """Release the PostgreSQL advisory lock."""
@@ -118,12 +136,6 @@ class PsycopgBackend(Backend, driver=psycopg):
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
         self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        """Rollback any open transaction for the duration of the context."""
-        self.rollback()
-        yield
 
     def commit(self) -> None:
         """Commit the current transaction."""

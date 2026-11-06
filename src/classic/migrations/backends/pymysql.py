@@ -15,12 +15,13 @@
 
 """MySQL backend implemented with the ``PyMySQL`` driver."""
 
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 import pymysql
+
 from classic.migrations.backends.base import Backend
-from classic.migrations.exceptions import MigrationLockError
 
 
 def _utcnow() -> datetime:
@@ -31,7 +32,8 @@ def _utcnow() -> datetime:
 class PyMySQLBackend(Backend, driver=pymysql):
     """MySQL migration backend using the ``PyMySQL`` driver."""
 
-    transactional_ddl = True
+    # MySQL DDL commits implicitly, so migration DDL cannot be rolled back.
+    transactional_ddl = False
 
     def connect(self) -> pymysql.connections.Connection:
         """Open a MySQL connection in autocommit mode."""
@@ -111,12 +113,15 @@ class PyMySQLBackend(Backend, driver=pymysql):
 
     def acquire_lock(self) -> None:
         """Acquire a named MySQL advisory lock for this migration table."""
-        cursor = self.execute("SELECT GET_LOCK(%s, -1)", (self.migration_table,))
+        # GET_LOCK timeout is in whole seconds; a negative value waits forever.
+        timeout = -1 if self.lock_timeout is None else math.ceil(self.lock_timeout)
+        cursor = self.execute(
+            "SELECT GET_LOCK(%s, %s)",
+            (self.migration_table, timeout),
+        )
         acquired = cursor.fetchone()[0]
-        if not acquired:
-            raise MigrationLockError(
-                "Could not acquire advisory lock on the database",
-            )
+        if acquired != 1:  # 0 = timeout, NULL = error
+            raise self.lock_error()
 
     def release_lock(self) -> None:
         """Release the named MySQL advisory lock."""

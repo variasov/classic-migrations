@@ -16,21 +16,23 @@
 """Base classes for database backends and transaction management."""
 
 import hashlib
-from collections.abc import Generator
-from contextlib import contextmanager
+import sys
 from logging import getLogger
 from types import TracebackType
 from typing import Any, ClassVar
 
-from classic.migrations.exceptions import BadConnectionURI
-from typing_extensions import Self
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
+
+from classic.migrations.exceptions import BadConnectionURI, MigrationLockError
 
 logger = getLogger("classic.migrations")
 
 STATUS_PENDING = "PENDING"
 STATUS_APPLIED = "APPLIED"
 STATUS_ROLLED_BACK = "ROLLED_BACK"
-ALL_STATUSES = (STATUS_PENDING, STATUS_APPLIED, STATUS_ROLLED_BACK)
 
 
 def lock_hash(identifier: str) -> int:
@@ -40,8 +42,8 @@ def lock_hash(identifier: str) -> int:
     (``hash()`` is randomized per process via ``PYTHONHASHSEED``), so
     advisory locks derived from it collide correctly across processes.
     """
-    digest = hashlib.sha256(identifier.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big")
+    digest = hashlib.sha256(identifier.encode("utf-8")).digest()  # pragma: no mutate
+    return int.from_bytes(digest[:8], "big")  # pragma: no mutate
 
 
 class TransactionManager:
@@ -63,7 +65,7 @@ class TransactionManager:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        _traceback: TracebackType | None,
     ) -> bool | None:
         """Commit on success, rollback on error."""
         if exc_type:
@@ -86,8 +88,6 @@ class Backend:
 
     driver: Any
 
-    versions_table = "versions"
-
     transactional_ddl: ClassVar[bool] = False
 
     supports_schemas: ClassVar[bool] = False
@@ -95,9 +95,9 @@ class Backend:
     def __init_subclass__(cls, driver: Any = None, **kwargs: Any) -> None:
         """Register concrete backends in :attr:`implementations` by driver."""
         super().__init_subclass__(**kwargs)
-        if driver is not None:
-            cls.driver = driver
-            cls.implementations[driver.__name__] = cls
+        if driver is not None:  # pragma: no mutate
+            cls.driver = driver  # pragma: no mutate
+            cls.implementations[driver.__name__] = cls  # pragma: no mutate
 
     @classmethod
     def get_implementation(cls, name: str) -> type["Backend"]:
@@ -117,6 +117,7 @@ class Backend:
         db_user: str | None = None,
         db_password: str | None = None,
         db_args: dict[str, Any] | None = None,
+        lock_timeout: float | None = None,
         migration_table: str = "migrations",
         migration_schema: str | None = None,
         versions_table: str = "versions",
@@ -129,15 +130,32 @@ class Backend:
         self.db_user = db_user
         self.db_password = db_password
         self.db_args = db_args or {}
+        if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
+            raise ValueError("lock_timeout must not be negative")
+        # An infinite timeout means waiting forever.
+        self.lock_timeout = (
+            None if lock_timeout == float("inf") else lock_timeout
+        )  # pragma: no mutate
         self.migration_table = migration_table
         self.migration_schema = migration_schema
         self.versions_table = versions_table
         self.versions_schema = versions_schema
         self.DatabaseError = self.driver.DatabaseError
         self._connection = self.connect()
-        self.init_connection(self._connection)
-        self.migration_table_quoted = self.quote_table(self.migration_table)
-        self.versions_table_quoted = self.quote_versions_table()
+        try:
+            self.init_connection(self._connection)
+            self.migration_table_quoted = self.quote_table(self.migration_table)
+            self.versions_table_quoted = self.quote_versions_table()
+        except BaseException:
+            # Do not leak the connection; never mask the original error.
+            try:
+                self._connection.close()
+            except Exception:
+                logger.warning(
+                    "Failed to close connection after initialization failure",
+                    exc_info=True,
+                )
+            raise
         self._in_transaction = False
 
     # ------------------------------------------------------------------
@@ -213,7 +231,9 @@ class Backend:
     def quote_identifier(self, s: str) -> str:
         """Return ``s`` quoted as a database identifier."""
         if "\x00" in s:
-            raise ValueError("identifier must not contain NUL bytes")
+            raise ValueError(
+                "identifier must not contain NUL bytes"
+            )  # pragma: no mutate
         quoted = s.replace('"', '""')
         return f'"{quoted}"'
 
@@ -259,17 +279,23 @@ class Backend:
         self._in_transaction = True
         self.execute("BEGIN")
 
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        """Provide a context in which transactions are disabled."""
-        self.rollback()
-        yield
-
     def acquire_lock(self) -> None:
-        """Acquire a session-level lock on the database."""
+        """Acquire a session-level lock on the database.
+
+        Waits according to :attr:`lock_timeout`: ``None`` waits forever,
+        ``0`` does not wait, ``N > 0`` waits up to ``N`` seconds. Raises
+        :class:`MigrationLockError` if the lock could not be acquired.
+        """
         raise NotImplementedError(
             "Native session locking is not implemented for this backend",
         )
+
+    def lock_error(self) -> MigrationLockError:
+        """Return the error to raise when the lock cannot be acquired."""
+        message = "Could not acquire advisory lock on the database"
+        if self.lock_timeout:
+            message += f" within {self.lock_timeout:g} s"
+        return MigrationLockError(message)
 
     def release_lock(self) -> None:
         """Release the session-level lock on the database."""

@@ -16,10 +16,6 @@
 """Exception types used throughout the library."""
 
 
-class InvalidArgument(Exception):
-    """Invalid CLI argument."""
-
-
 class BadConnectionURI(Exception):
     """An invalid connection URI."""
 
@@ -38,3 +34,11 @@ class NoMigration(Exception):
 
 class MigrationLockError(Exception):
     """Could not acquire an advisory lock on the database."""
+
+
+class MigrationPending(Exception):
+    """A migration is left PENDING by a run that failed midway."""
+
+
+class MissingSource(Exception):
+    """A migrations source directory does not exist."""

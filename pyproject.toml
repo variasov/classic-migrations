@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "classic-migrations"
-version = "2.1.0"
+version = "3.0.0"
 description = "Database migrations with SQL"
 readme = "README.rst"
 authors = [
@@ -55,16 +55,18 @@ dev = [
     "psycopg-binary~=3.3",
     "pymysql~=1.2",
     "pymssql~=2.3",
+    "vulture~=2.16",
 ]
 
-[tool.setuptools]
-package-dir = { "" = "sources" }
-
 [tool.setuptools.packages.find]
-where = ["sources"]
+where = ["src"]
 namespaces = true
 
+[tool.setuptools.package-data]
+"classic.migrations" = ["py.typed"]
+
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 addopts = "--cov=classic --cov-report=term-missing"
 
 [tool.coverage.run]
@@ -75,12 +77,11 @@ branch = true
 show_missing = true
 
 [tool.pyright]
-include = ["sources", "tests"]
+include = ["src", "tests"]
 exclude = [
     "**/__pycache__",
     "**/.pytest_cache",
     ".venv",
-    "sources/classic/migrations/backends/contrib",
 ]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = "none"
@@ -92,9 +93,9 @@ extraPaths = ["."]
 
 [tool.ruff]
 target-version = "py310"
-extend-exclude = [
-    "sources/classic/migrations/backends/contrib",
-]
+
+[tool.ruff.format]
+line-ending = "lf"
 
 [tool.ruff.lint]
 select = ["ALL"]
@@ -108,6 +109,7 @@ ignore = [
     "N818",     # exception names are part of the public API
     "A002",     # Migration(id=...) is defined by the spec
     "A003",     # MigrationsCollection.list() is defined by the spec
+    "COM812",   # conflicts with the ruff formatter
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -125,15 +127,47 @@ ignore = [
     "CPY001",   # tests do not carry copyright headers
     "S608",     # SQL strings in tests are not injection vectors
 ]
-"sources/classic/migrations/backends/*.py" = [
+"src/classic/migrations/backends/*.py" = [
     "S608",     # identifier interpolation is quoted and intentional
 ]
-"sources/classic/migrations/backends/base.py" = [
+"src/classic/migrations/backends/base.py" = [
     "PLR0913",  # connection config takes many explicit kwargs
     "PLR0917",
 ]
-"sources/classic/migrations/migrator.py" = [
+"src/classic/migrations/migrator.py" = [
     "FBT",      # apply/rollback take a spec-defined `fake` flag
     "PLR0913",  # connection config takes many explicit kwargs
     "PLR0917",
+]
+
+[tool.vulture]
+paths = ["src", "tests"]
+min_confidence = 60
+ignore_names = [
+    "isolation_level",  # sqlite3.Connection attribute set for autocommit
+    "paramstyle",       # DB-API attribute of the fake driver
+    "pytestmark",       # read by pytest
+    "return_value",     # Mock configuration in tests
+    "side_effect",
+]
+
+[tool.mutmut]
+source_paths = ["src/classic/migrations"]
+pytest_add_cli_args = ["-o", "addopts="]
+mutate_only_covered_lines = true
+do_not_mutate = [
+    "src/classic/migrations/backends/oracle.py",
+    "src/classic/migrations/backends/psycopg.py",
+    "src/classic/migrations/backends/pymysql.py",
+    "src/classic/migrations/backends/pymssql.py",
+]
+pytest_add_cli_args_test_selection = [
+    "tests/test_migrations.py",
+    "tests/test_migrator.py",
+    "tests/test_cli.py",
+    "tests/test_settings.py",
+    "tests/test_package.py",
+    "tests/test_integration.py",
+    "tests/test_backend_base.py",
+    "tests/backends/test_sqlite3.py",
 ]

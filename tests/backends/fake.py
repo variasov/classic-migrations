@@ -1,6 +1,4 @@
-from collections.abc import Generator
-from contextlib import contextmanager
-from typing import Any
+from typing import Any, ClassVar
 
 from classic.migrations.backends.base import Backend
 
@@ -46,6 +44,11 @@ class _FakeConnection:
 class FakeBackend(Backend, driver=_FakeDriver):
     """Test-only backend with in-memory event log and operation journal."""
 
+    # Failures injected into newly created instances (operation -> error).
+    default_fail_on: ClassVar[dict[str, Exception]] = {}
+    # Every instance created, in order (reset by tests).
+    instances: ClassVar[list["FakeBackend"]] = []
+
     def __init__(
         self,
         *,
@@ -56,6 +59,10 @@ class FakeBackend(Backend, driver=_FakeDriver):
         for migration_id in applied or []:
             self._events.append((migration_id, "2000-01-01 00:00:00", "APPLIED"))
         self._migration_table_ready = False
+        self.ensure_calls = 0
+        self.close_calls = 0
+        self.fail_on: dict[str, Exception] = dict(self.default_fail_on)
+        self.instances.append(self)
         self._locked_flag = False
         self._closed = False
         self._cursor_count = 0
@@ -67,7 +74,10 @@ class FakeBackend(Backend, driver=_FakeDriver):
         self.db_user = kwargs.get("db_user")
         self.db_password = kwargs.get("db_password")
         self.db_args = kwargs.get("db_args", {})
+        self.lock_timeout = kwargs.get("lock_timeout")
         self.migration_table = kwargs.get("migration_table", "migrations")
+        self.migration_schema = kwargs.get("migration_schema")
+        self.versions_schema = kwargs.get("versions_schema")
         self.versions_table = "versions"
         self._in_transaction = False
         self._connection = _FakeConnection()
@@ -127,31 +137,37 @@ class FakeBackend(Backend, driver=_FakeDriver):
         self._in_transaction = False
         self._oplog.append(("commit", None))
 
+    def _maybe_fail(self, name: str) -> None:
+        error = self.fail_on.get(name)
+        if error is not None:
+            raise error
+
     def rollback(self) -> None:
         self._in_transaction = False
         self._oplog.append(("rollback", None))
+        self._maybe_fail("rollback")
 
     def close(self) -> None:
+        self.close_calls += 1
         self._closed = True
         self._locked_flag = False
+        self._maybe_fail("close")
 
     def acquire_lock(self) -> None:
+        self._maybe_fail("acquire_lock")
         self._locked_flag = True
         self._oplog.append(("acquire_lock", None))
 
     def release_lock(self) -> None:
         self._locked_flag = False
         self._oplog.append(("release_lock", None))
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        self.rollback()
-        yield
+        self._maybe_fail("release_lock")
 
     def list_tables(self) -> list[str]:
         return [self.migration_table] if self._migration_table_ready else []
 
     def ensure_migration_table(self) -> None:
+        self.ensure_calls += 1
         if self._migration_table_ready:
             return
         self._migration_table_ready = True

@@ -1,12 +1,15 @@
+import threading
+import time
 from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 
 import oracledb
 import pytest
+
 from classic.migrations import MigrationsCollection, Migrator
 from classic.migrations.backends.oracle import OracleBackend
-
+from classic.migrations.exceptions import MigrationLockError
 from tests.conftest import get_credentials
 
 _env = get_credentials("ORACLE_")
@@ -87,6 +90,26 @@ def test_mark_applied_inserts_event(backend: OracleBackend) -> None:
     assert len(history) == 1
     assert history[0][0] == "0001.init"
     assert history[0][2] == "APPLIED"
+
+
+def test_mark_visible_from_new_connection(backend: OracleBackend) -> None:
+    backend._create_migration_table()
+    backend.mark("0001.init", "APPLIED")
+
+    fresh = OracleBackend(
+        db_host=_env_value("host"),
+        db_port=int(_env_value("port")),
+        db_name=_env_value("name"),
+        db_user=_env_value("user"),
+        db_password=_env_value("password"),
+        migration_table="migrations_test",
+    )
+    try:
+        history = fresh.migration_history()
+        assert [row[0] for row in history] == ["0001.init"]
+        assert [row[2] for row in history] == ["APPLIED"]
+    finally:
+        fresh.close()
 
 
 def test_unmark_appends_rolled_back_event(backend: OracleBackend) -> None:
@@ -178,9 +201,9 @@ def test_lock_acquire_release(backend: OracleBackend) -> None:
     assert len(history) == 1
 
 
-def test_lock_rollback_on_exception(backend: OracleBackend) -> None:
+def test_rollback_undoes_uncommitted_mark(backend: OracleBackend) -> None:
     backend._create_migration_table()
-    backend.acquire_lock()
+    backend.begin()
     backend.mark("0001.init", "APPLIED")
     backend.rollback()
     history = backend._migration_history()
@@ -202,14 +225,6 @@ def test_transaction_rollback(backend: OracleBackend) -> None:
         raise RuntimeError("forced")
     history = backend._migration_history()
     assert len(history) == 0
-
-
-def test_disable_transactions_noop(backend: OracleBackend) -> None:
-    backend._create_migration_table()
-    with backend.disable_transactions():
-        backend.mark("0001.init", "APPLIED")
-    history = backend._migration_history()
-    assert len(history) == 1
 
 
 def test_quote_identifier(backend: OracleBackend) -> None:
@@ -316,3 +331,107 @@ class TestOracleLifecycle:
                 self._drop_all(db)
         finally:
             pass
+
+    def test_apply_history_visible_from_new_connection(self, source: Path) -> None:
+        def write_file(path: Path, content: str) -> Path:
+            path.write_text(content, encoding="utf-8")
+            return path
+
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+
+        table = "migrations_it_newconn"
+        db = Migrator(
+            driver="oracledb",
+            db_host=_env_value("host"),
+            db_port=int(_env_value("port")),
+            db_name=_env_value("name"),
+            db_user=_env_value("user"),
+            db_pass=_env_value("password"),
+            migration_table=table,
+        )
+        migrations = MigrationsCollection(str(source))
+
+        with db:
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
+
+        fresh = OracleBackend(
+            db_host=_env_value("host"),
+            db_port=int(_env_value("port")),
+            db_name=_env_value("name"),
+            db_user=_env_value("user"),
+            db_password=_env_value("password"),
+            migration_table=table,
+        )
+        try:
+            history = fresh.migration_history()
+            assert history[-1][0] == "0001.init"
+            assert history[-1][2] == "APPLIED"
+        finally:
+            _drop_table(fresh, fresh.migration_table_quoted)
+            fresh.execute(
+                "BEGIN EXECUTE IMMEDIATE 'DROP TABLE foo'; "
+                "EXCEPTION WHEN OTHERS THEN NULL; END;",
+            )
+            fresh.close()
+
+
+def _second_backend() -> OracleBackend:
+    return OracleBackend(
+        db_host=_env_value("host"),
+        db_port=int(_env_value("port")),
+        db_name=_env_value("name"),
+        db_user=_env_value("user"),
+        db_password=_env_value("password"),
+        migration_table="migrations_test",
+        lock_timeout=0,
+    )
+
+
+def test_lock_second_backend_fails_immediately(backend: OracleBackend) -> None:
+    second = _second_backend()
+    backend.acquire_lock()
+    try:
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError) as exc_info:
+            second.acquire_lock()
+        assert time.monotonic() - start < 2
+        assert "within" not in str(exc_info.value)
+        backend.release_lock()
+        second.acquire_lock()
+        second.release_lock()
+    finally:
+        second.close()
+
+
+def test_lock_timeout_waits_then_fails(backend: OracleBackend) -> None:
+    second = _second_backend()
+    second.lock_timeout = 1.2
+    backend.acquire_lock()
+    try:
+        start = time.monotonic()
+        with pytest.raises(MigrationLockError, match=r"within 1.2 s"):
+            second.acquire_lock()
+        assert time.monotonic() - start >= 1.0
+    finally:
+        backend.release_lock()
+        second.close()
+
+
+def test_lock_default_waits_until_released(backend: OracleBackend) -> None:
+    second = _second_backend()
+    second.lock_timeout = None
+    backend.acquire_lock()
+    # The lock is session-bound; release it from a timer thread.
+    timer = threading.Timer(0.5, backend.release_lock)
+    try:
+        timer.start()
+        start = time.monotonic()
+        second.acquire_lock()
+        assert time.monotonic() - start >= 0.3
+        second.release_lock()
+    finally:
+        timer.cancel()
+        timer.join()
+        second.close()

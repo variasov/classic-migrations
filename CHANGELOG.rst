@@ -1,8 +1,51 @@
 Changelog
 =========
 
-2.0.0 (unreleased)
+3.0.0 (unreleased)
 ------------------
+
+Исправления по результатам ревью 2.1.0.
+
+* Порядок независимых миграций стал стабильным (лексикографическим);
+  ``target`` в ``apply``/``rollback`` вычисляется по графу зависимостей:
+  ``apply X`` применяет X и её зависимости, ``rollback X`` откатывает X и
+  зависящие от неё.
+* Директивы ``-- depends`` и ``-- transactional`` разбираются строго: другой
+  регистр, неизвестные директивы и несколько строк ``depends`` теперь ошибка,
+  а не молчаливое игнорирование.
+* SQLite: каждая миграция выполняется в собственной транзакции; блокировка
+  берётся через файл-спутник ``<db>.<table>.lock``. Хуки выполняются вне
+  транзакции.
+* MySQL: ``transactional_ddl`` установлен в ``False`` (DDL в MySQL неявно
+  коммитит). Oracle: соединение в autocommit; нетранзакционный путь
+  фиксирует события истории и DML.
+* ``Migrator`` принимает ``db_args`` (дополнительные параметры подключения) и
+  ``lock_timeout`` (таймаут advisory-lock: ``None`` — ждать бесконечно, ``0`` —
+  не ждать).
+* Миграция в статусе ``PENDING`` блокирует ``apply``/``rollback`` до ручного
+  снятия через ``--fake``; ``list`` показывает её.
+* ``SOURCES`` разделяется через ``os.pathsep``; несуществующий каталог —
+  ошибка; ``MigrationsCollection`` принимает ``Path``.
+* CLI создаёт коллекцию и мигратор лениво; ошибки печатаются одной строкой
+  без трейсбека (кроме ``-vv``) и дают ненулевой код выхода.
+* ``Migrator``: соединение закрывается даже при сбое взятия блокировки,
+  ``ensure_migration_table`` вызывается один раз, а ошибки очистки при выходе
+  не маскируют исходное исключение.
+* ``Self`` берётся из ``typing`` на Python 3.11+; ``typing_extensions`` нужен
+  только для Python < 3.11.
+* Удалён мёртвый код; ``Migration`` и ``Hook`` экспортированы из пакета.
+
+2.1.0
+-----
+
+* Добавлен класс ``CLI`` для встраивания в код приложения; исправлено
+  освобождение advisory-lock.
+* Исправлен отсутствующий импорт ``Settings``.
+* CI: запуск тестов бэкендов и скрипт выдачи права ``DBMS_LOCK`` для Oracle.
+* Исправлены тайпхинты для совместимости с Python 3.10; улучшено логирование.
+
+2.0.0
+-----
 
 **This version introduces backwards incompatible changes.**
 
@@ -18,7 +61,7 @@ Public API
   database. It takes the history event log and returns migrations and hooks.
 * Add a new ``Migrator`` class: it takes database connection parameters,
   selects a backend by driver module name and executes migrations. Public
-  methods: ``lock()``, ``history()``, ``apply()``, ``rollback()``, ``close()``.
+  methods: ``history()``, ``apply()``, ``rollback()``, ``close()``.
   ``Migrator`` contains no SQL — all queries live in the backend.
 * Rename ``DatabaseBackend`` to ``Backend``.
 * ``Migrator`` is a context manager: entering it opens the connection and takes

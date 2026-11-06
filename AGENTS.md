@@ -5,7 +5,7 @@
 ## Проект
 
 `classic-migrations` — библиотека SQL-миграций (форк yoyo-migrations).
-Версия **2.0.0**: только SQL-миграции, разделение на `MigrationsCollection`
+Версия **3.0.0**: только SQL-миграции, разделение на `MigrationsCollection`
 (чтение источников) и `Migrator` (выполнение через `Backend`), append-only
 таблица истории, pre/post-хуки.
 
@@ -20,34 +20,38 @@
 Зависимости и окружение — через `uv` (`uv.lock` в корне), группа зависимостей
 `dev` (содержит pytest, pytest-cov, ruff, pyright, драйверы СУБД).
 
-Проект собирается из `sources/` (корневой `pyproject.toml`,
-`package-dir = {"" = "sources"}`), точка входа
+Проект собирается из `src/` (корневой `pyproject.toml`,
+`[tool.setuptools.packages.find] where = ["src"]`), точка входа
 `migrations = classic.migrations.cli:main`.
 
-Проверка изменений выполняется командами:
+Проверка изменений выполняется командами (полный эквивалент CI, `.github/workflows/checks.yml`):
 
 ```powershell
-uv run ruff check sources/ tests/
+uv run ruff check
+uv run ruff format --check
 uv run pyright
+uv run vulture
 uv run pytest
 ```
 
-Настройки ruff — в `[tool.ruff]` (`pyproject.toml`); pyright — в
-`[tool.pyright]` и `[tool.pyright.executionEnvironments]`; покрытие —
-плагин pytest-cov, настройки в `[tool.pytest.ini_options]` (запускается
-сам `pytest`, см. `addopts`).
+Настройки ruff — в `[tool.ruff]`/`[tool.ruff.lint]`/`[tool.ruff.format]`
+(`pyproject.toml`; там же `line-ending = "lf"` — не меняй, это паритет с
+Linux-CI); pyright — в `[tool.pyright]` и
+`[tool.pyright.executionEnvironments]`; покрытие — плагин pytest-cov,
+настройки в `[tool.pytest.ini_options]` (запускается сам `pytest`, см.
+`addopts`).
 
 ## Структура
 
 ```
-sources/classic/migrations/
-    __init__.py                        # публичный API: MigrationsCollection, Migrator, исключения, __version__
+src/classic/migrations/
+    __init__.py                        # публичный API: MigrationsCollection, Migrator, Migration, Hook, исключения, __version__
     migrations.py                      # MigrationsCollection + Migration/Hook + чтение/парсинг SQL
     migrator.py                        # Migrator: lock/history/apply/rollback, БЕЗ SQL
     cli.py                             # argparse + main(): list/apply/rollback
     settings.py                        # Settings (чтение из os.environ и .env)
     exceptions.py                      # исключения: BadMigration, MigrationConflict, BadConnectionURI,
-                                       # InvalidArgument, MigrationLockError, NoMigration
+                                       # MigrationLockError, MigrationPending, MissingSource, NoMigration
     backends/
         __init__.py                    # регистрация бэкендов (опциональный импорт)
         base.py                        # Backend: оркестрация, БЕЗ SQL-запросов
@@ -58,7 +62,7 @@ sources/classic/migrations/
         oracle.py                      # OracleBackend
 tests/
     conftest.py                        # фикстура source (tmp_path) + get_credentials
-    test_cli.py                        # тесты CLI: парсинг + cmd_* с Mock(Migrator)/Mock(MigrationsCollection)
+    test_cli.py                        # тесты CLI: парсинг + методы CLI._* с Mock(Migrator)/Mock(MigrationsCollection)
     test_migrations.py                 # тесты MigrationsCollection без бэкенда
     test_migrator.py                   # тесты Migrator с FakeBackend
     test_integration.py                # публичный API на реальной SQLite в RAM
@@ -118,7 +122,8 @@ tests/
 
 Тесты разделены по слоям:
 
-- **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы `cmd_*`.
+- **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы методов
+  `CLI._apply`/`CLI._rollback`/`CLI._list`.
   `Migrator` и `MigrationsCollection` подменяются `Mock`, проверяется что
   вызываются правильные методы с правильными параметрами
   (`assert_called_once_with(...)`). Настоящие миграции и БД не используются.
