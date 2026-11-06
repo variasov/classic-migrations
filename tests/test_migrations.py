@@ -945,6 +945,8 @@ class TestSources:
     def test_empty_sources(self) -> None:
         with pytest.raises(ValueError, match="empty"):
             MigrationsCollection([])
+
+
 # ---------------------------------------------------------------------------
 # Mutation-killing tests
 # ---------------------------------------------------------------------------

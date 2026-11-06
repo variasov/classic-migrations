@@ -121,7 +121,8 @@ def read_sql(
                 statements[0],
                 path,
                 check_typos=check_typos,
-                first_line=1 + len(re.findall(r"\r\n|\n|\r", skipped)),  # pragma: no mutate  # noqa: E501
+                first_line=1
+                + len(re.findall(r"\r\n|\n|\r", skipped)),  # pragma: no mutate
             )
             statements[0] = sql
     statements = [s for s in statements if s.strip()]
@@ -233,7 +234,9 @@ class Hook:
         if self._loaded:
             return
         # Directives are meaningless in hooks: ignore them, typos included.
-        _directives, statements = read_sql(self.path, check_typos=False)  # pragma: no mutate  # noqa: E501
+        _directives, statements = read_sql(
+            self.path, check_typos=False
+        )  # pragma: no mutate
         self.statements = statements
         self._loaded = True  # pragma: no mutate
 
@@ -271,7 +274,9 @@ class MigrationsCollection:
     def _read_migrations(self) -> list[Migration]:
         migrations: OrderedDict[str, Migration] = OrderedDict()
         for directory in self._expand_sources():
-            logger.debug("Reading migrations from source %s", directory)  # pragma: no mutate  # noqa: E501
+            logger.debug(
+                "Reading migrations from source %s", directory
+            )  # pragma: no mutate
             for filename in sorted(Path(directory).iterdir()):
                 if filename.is_dir():
                     continue
@@ -416,7 +421,9 @@ class MigrationsCollection:
             )
         else:
             listed = ", ".join(repr(i) for i in ids)  # pragma: no mutate
-            per_id = "; ".join(f"for {i!r}: {advice(i)}" for i in ids)  # pragma: no mutate  # noqa: E501
+            per_id = "; ".join(
+                f"for {i!r}: {advice(i)}" for i in ids
+            )  # pragma: no mutate
             message = (
                 f"Migrations {listed} are PENDING: a previous run failed midway. "
                 f"Fix the database manually, then mark each of them ({per_id})."

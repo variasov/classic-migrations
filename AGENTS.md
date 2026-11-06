@@ -24,18 +24,22 @@
 `[tool.setuptools.packages.find] where = ["src"]`), точка входа
 `migrations = classic.migrations.cli:main`.
 
-Проверка изменений выполняется командами:
+Проверка изменений выполняется командами (полный эквивалент CI, `.github/workflows/checks.yml`):
 
 ```powershell
-uv run ruff check src/ tests/
+uv run ruff check
+uv run ruff format --check
 uv run pyright
+uv run vulture
 uv run pytest
 ```
 
-Настройки ruff — в `[tool.ruff]` (`pyproject.toml`); pyright — в
-`[tool.pyright]` и `[tool.pyright.executionEnvironments]`; покрытие —
-плагин pytest-cov, настройки в `[tool.pytest.ini_options]` (запускается
-сам `pytest`, см. `addopts`).
+Настройки ruff — в `[tool.ruff]`/`[tool.ruff.lint]`/`[tool.ruff.format]`
+(`pyproject.toml`; там же `line-ending = "lf"` — не меняй, это паритет с
+Linux-CI); pyright — в `[tool.pyright]` и
+`[tool.pyright.executionEnvironments]`; покрытие — плагин pytest-cov,
+настройки в `[tool.pytest.ini_options]` (запускается сам `pytest`, см.
+`addopts`).
 
 ## Структура
 

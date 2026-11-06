@@ -133,7 +133,9 @@ class Backend:
         if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
             raise ValueError("lock_timeout must not be negative")
         # An infinite timeout means waiting forever.
-        self.lock_timeout = None if lock_timeout == float("inf") else lock_timeout  # pragma: no mutate  # noqa: E501
+        self.lock_timeout = (
+            None if lock_timeout == float("inf") else lock_timeout
+        )  # pragma: no mutate
         self.migration_table = migration_table
         self.migration_schema = migration_schema
         self.versions_table = versions_table
@@ -229,7 +231,9 @@ class Backend:
     def quote_identifier(self, s: str) -> str:
         """Return ``s`` quoted as a database identifier."""
         if "\x00" in s:
-            raise ValueError("identifier must not contain NUL bytes")  # pragma: no mutate  # noqa: E501
+            raise ValueError(
+                "identifier must not contain NUL bytes"
+            )  # pragma: no mutate
         quoted = s.replace('"', '""')
         return f'"{quoted}"'
 

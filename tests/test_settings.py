@@ -164,7 +164,8 @@ def test_utf8_env_file_non_ascii(tmp_path: Path) -> None:
 
 
 def test_default_env_file_is_dot_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Kills mutmut_1: default ``".env"`` -> ``"XX.envXX"``.
 
@@ -195,4 +196,3 @@ def test_env_file_opened_with_exact_utf8_encoding(
     Settings(env_file=env_file)
     assert spy.call_args is not None
     assert spy.call_args.kwargs.get("encoding") == "utf-8"
-

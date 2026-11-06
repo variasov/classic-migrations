@@ -116,7 +116,9 @@ class CLI:
             default=min_verbosity,
             help="Verbose output. Use multiple times to increase level of verbosity",
         )
-        subparsers = parser.add_subparsers(dest="command", required=False)  # pragma: no mutate  # noqa: E501
+        subparsers = parser.add_subparsers(
+            dest="command", required=False
+        )  # pragma: no mutate
         p = subparsers.add_parser("apply", parents=[common], help="Apply migrations")
         p.add_argument(
             "migration_name",
@@ -228,8 +230,12 @@ class CLI:
     def _print_migrations(self, migrations: list[Any]) -> None:
         """Вывести миграции в виде CSV-таблицы: идентификатор и каталог-источник."""
         ids = [m.id for m in migrations]
-        sources = [getattr(m, "source_dir", "") or "" for m in migrations]  # pragma: no mutate  # noqa: E501
-        self._write_csv(("ID", "SOURCE"), list(zip(ids, sources, strict=False)))  # pragma: no mutate  # noqa: E501
+        sources = [
+            getattr(m, "source_dir", "") or "" for m in migrations
+        ]  # pragma: no mutate
+        self._write_csv(
+            ("ID", "SOURCE"), list(zip(ids, sources, strict=False))
+        )  # pragma: no mutate
 
     def _apply(self, args: argparse.Namespace) -> int:
         """Применить ожидающие миграции до ``args.migration_name`` включительно."""
@@ -275,7 +281,9 @@ class CLI:
         if args.history:
             rows = [row for row in rows if row[0] in ("A", "P")]
 
-        status, ids, sources = zip(*rows, strict=False) if rows else ((), (), ())  # pragma: no mutate  # noqa: E501
+        status, ids, sources = (
+            zip(*rows, strict=False) if rows else ((), (), ())
+        )  # pragma: no mutate
 
         if sys.stdout.isatty():
             colors = {"A": "\033[92m", "P": "\033[93m"}

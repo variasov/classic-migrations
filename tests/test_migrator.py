@@ -205,9 +205,7 @@ class TestCleanup:
         assert FakeBackend.instances[0].close_calls == 1
         assert migrator._backend is None
         records = [
-            r
-            for r in caplog.records
-            if r.msg == "Closing the connection failed"
+            r for r in caplog.records if r.msg == "Closing the connection failed"
         ]
         assert len(records) >= 1
         assert records[0].exc_info
@@ -781,8 +779,7 @@ class TestLogMessages:
             migrator.rollback([m1], {})
         records = caplog.records
         assert any(
-            r.msg
-            == "Migration %s has no rollback file; only marking it as rolled back"
+            r.msg == "Migration %s has no rollback file; only marking it as rolled back"
             for r in records
         )
 
@@ -802,9 +799,7 @@ class TestLogMessages:
 
         records = caplog.records
         run_hook = [
-            r
-            for r in records
-            if r.msg == "Running hook %s (%s): %d statement(s)"
+            r for r in records if r.msg == "Running hook %s (%s): %d statement(s)"
         ]
         assert len(run_hook) >= 2
         assert "pre-apply" in run_hook[0].getMessage()
@@ -838,9 +833,7 @@ class TestLogMessages:
             raise RuntimeError("boom")
         records = caplog.records
         rb_tx = [
-            r
-            for r in records
-            if r.msg == "Rolling back transaction after error: %s"
+            r for r in records if r.msg == "Rolling back transaction after error: %s"
         ]
         assert len(rb_tx) >= 1
         assert "boom" in rb_tx[0].getMessage()
@@ -875,7 +868,8 @@ class TestExecutedStatements:
         migrator = Migrator(driver="fake")
         rollback_stmts = ["DROP TABLE t", "DELETE FROM log"]
         m1 = _make_migration(
-            "0001.a", statements=["CREATE TABLE t (x int)"],
+            "0001.a",
+            statements=["CREATE TABLE t (x int)"],
             rollback_statements=rollback_stmts,
             transactional=True,
         )
@@ -911,9 +905,7 @@ class TestExecutedStatements:
 class TestTargetedMutations:
     """Targeted tests for specific mutation scenarios."""
 
-    def test_rollback_exec_sql_logged(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_rollback_exec_sql_logged(self, caplog: pytest.LogCaptureFixture) -> None:
         """Verify actual SQL logged during non-transactional rollback.
 
         Catches _execute_statement(None) mutation.
@@ -922,12 +914,9 @@ class TestTargetedMutations:
         m1 = _make_migration("0001.a", transactional=False)
         with caplog.at_level(logging.DEBUG, logger="classic.migrations"), migrator:
             migrator.rollback([m1], {})
-        exec_records = [
-            r for r in caplog.records if r.msg == "Executing SQL: %s"
-        ]
+        exec_records = [r for r in caplog.records if r.msg == "Executing SQL: %s"]
         assert any(
-            r.getMessage() == "Executing SQL: -- rollback 0001.a"
-            for r in exec_records
+            r.getMessage() == "Executing SQL: -- rollback 0001.a" for r in exec_records
         )
 
     def test_rollback_for_rollback_uses_rollback_tx(self) -> None:
@@ -1012,8 +1001,7 @@ class TestHistoryLogMutationSurvival:
             migrator.history()
         records = caplog.records
         table_records = [
-            r for r in records
-            if r.msg == "Reading migration history from table %r"
+            r for r in records if r.msg == "Reading migration history from table %r"
         ]
         assert len(table_records) >= 1
         msg = table_records[0].getMessage()
@@ -1031,9 +1019,7 @@ class TestHistoryLogMutationSurvival:
         with caplog.at_level(logging.DEBUG, logger="classic.migrations"), migrator:
             migrator.history()
         records = caplog.records
-        count_records = [
-            r for r in records if r.msg == "Read %d history event(s)"
-        ]
+        count_records = [r for r in records if r.msg == "Read %d history event(s)"]
         assert len(count_records) >= 1
         msg = count_records[0].getMessage()
         assert "0" in msg
@@ -1103,9 +1089,7 @@ class TestHookMutationSurvival:
             migrator.apply([m1], {"pre-apply": [pre]})
 
         records = caplog.records
-        skip_records = [
-            r for r in records if r.msg == "Skipping empty hook %s (%s)"
-        ]
+        skip_records = [r for r in records if r.msg == "Skipping empty hook %s (%s)"]
         assert len(skip_records) >= 1
         msg = skip_records[0].getMessage()
         assert "pre-apply" in msg
@@ -1132,13 +1116,10 @@ class TestHookMutationSurvival:
             )
 
         records = caplog.records
-        skip_records = [
-            r for r in records if r.msg == "Skipping empty hook %s (%s)"
-        ]
+        skip_records = [r for r in records if r.msg == "Skipping empty hook %s (%s)"]
         assert len(skip_records) >= 1
         run_records = [
-            r for r in records
-            if r.msg == "Running hook %s (%s): %d statement(s)"
+            r for r in records if r.msg == "Running hook %s (%s): %d statement(s)"
         ]
         assert len(run_records) >= 1
         # The second hook's "Running hook" message must contain its name
@@ -1161,8 +1142,7 @@ class TestHookMutationSurvival:
 
         records = caplog.records
         run_records = [
-            r for r in records
-            if r.msg == "Running hook %s (%s): %d statement(s)"
+            r for r in records if r.msg == "Running hook %s (%s): %d statement(s)"
         ]
         assert len(run_records) >= 1
         msg = run_records[0].getMessage()

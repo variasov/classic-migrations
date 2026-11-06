@@ -122,9 +122,7 @@ class TestLockHash:
         assert lock_hash("a") != lock_hash("b")
 
     def test_deterministic_across_runs(self) -> None:
-        expected = int.from_bytes(
-            hashlib.sha256(b"mydb").digest()[:8], "big"
-        )
+        expected = int.from_bytes(hashlib.sha256(b"mydb").digest()[:8], "big")
         assert lock_hash("mydb") == expected
 
 
@@ -181,15 +179,21 @@ class TestInitAttributes:
         assert _MinimalBackend(db_password="secret").db_password == "secret"  # noqa: S105, S106
 
     def test_migration_schema(self) -> None:
-        assert _MinimalBackend(
-            migration_schema="myschema",
-        ).migration_schema == "myschema"
+        assert (
+            _MinimalBackend(
+                migration_schema="myschema",
+            ).migration_schema
+            == "myschema"
+        )
 
     def test_versions_schema(self) -> None:
-        assert _MinimalBackend(
-            versions_schema="legacy",
-            migration_schema=None,
-        ).versions_schema == "legacy"
+        assert (
+            _MinimalBackend(
+                versions_schema="legacy",
+                migration_schema=None,
+            ).versions_schema
+            == "legacy"
+        )
 
     def test_in_transaction_is_false(self) -> None:
         backend = _MinimalBackend()
@@ -441,8 +445,7 @@ class TestEnsureMigrationTableVersionsWarning:
         _ControllableBackend(existing_tables=["versions"]).ensure_migration_table()
         records = [r.getMessage() for r in caplog.records]
         expected = (
-            "Legacy 'versions' table found; "
-            "copying its records as APPLIED events"
+            "Legacy 'versions' table found; copying its records as APPLIED events"
         )
         assert expected in records, f"not found in {records}"
 
@@ -452,9 +455,7 @@ class TestEnsureMigrationTableVersionsWarning:
     ) -> None:
         caplog.set_level(logging.WARNING)
         _ControllableBackend().ensure_migration_table()
-        assert not any(
-            "Legacy" in r.getMessage() for r in caplog.records
-        )
+        assert not any("Legacy" in r.getMessage() for r in caplog.records)
 
     def test_warning_not_just_table_name(
         self,
@@ -482,9 +483,7 @@ class TestEnsureMigrationTableVersionsWarning:
         """mutmut_14."""
         caplog.set_level(logging.WARNING)
         _ControllableBackend(existing_tables=["versions"]).ensure_migration_table()
-        assert not any(
-            "XXLegacy" in r.getMessage() for r in caplog.records
-        )
+        assert not any("XXLegacy" in r.getMessage() for r in caplog.records)
 
     def test_warning_not_lowercased(
         self,

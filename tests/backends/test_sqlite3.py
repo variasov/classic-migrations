@@ -604,5 +604,3 @@ def test_lock_connection_autocommit_and_begin_immediate(tmp_path: Path) -> None:
         b.release_lock()
     finally:
         b.close()
-
-

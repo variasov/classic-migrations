@@ -474,7 +474,8 @@ class TestCmdList:
 
 
 def _get_subparser(
-    parser: argparse.ArgumentParser, name: str,
+    parser: argparse.ArgumentParser,
+    name: str,
 ) -> argparse.ArgumentParser | None:
     for action in parser._actions:
         choices = getattr(action, "choices", None)
@@ -576,6 +577,7 @@ class TestMain:
         patches = _patch_builders(mock_migrator, mock_collection)
         with patches[0], patches[1], pytest.raises(ValueError, match="boom"):
             main(["apply"])
+
     def test_main_uses_same_migrator_and_collection(
         self,
         mock_migrator: MagicMock,
@@ -905,7 +907,6 @@ class TestErrorHandling:
         assert "Traceback" not in err
 
 
-
 class TestIsDriverError:
     def test_detects_error_via_driver_Error_attr(self) -> None:
         class _MockDriver:
@@ -1122,6 +1123,7 @@ class TestCmdListEmptySource:
         lines = output.splitlines()
         cells = lines[1].split(",")
         assert cells == ["U", "0001.a", ""]
+
     def test_with_object_missing_source_dir(
         self,
         cli: CLI,
@@ -1138,4 +1140,3 @@ class TestCmdListEmptySource:
         assert lines[0] == "ID,SOURCE"
         cells = lines[1].split(",")
         assert cells == ["no_src", ""]
-

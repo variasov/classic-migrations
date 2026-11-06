@@ -314,7 +314,9 @@ class Migrator:
         for hook in hooks:
             hook.load()
             if not hook.statements:
-                logger.debug("Skipping empty hook %s (%s)", hook.name, hook.path)  # pragma: no mutate  # noqa: E501
+                logger.debug(
+                    "Skipping empty hook %s (%s)", hook.name, hook.path
+                )  # pragma: no mutate
                 continue
             logger.debug(
                 "Running hook %s (%s): %d statement(s)",
