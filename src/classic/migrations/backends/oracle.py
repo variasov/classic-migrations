@@ -84,7 +84,9 @@ class OracleBackend(Backend, driver=oracledb):
         if self.db_password is not None:
             kwargs["password"] = self.db_password
         kwargs.update(self.db_args)
-        return self.driver.connect(**kwargs)
+        conn = self.driver.connect(**kwargs)
+        conn.autocommit = True
+        return conn
 
     def cursor(self) -> Any:
         """Return a cursor that tolerates a trailing SQL terminator."""
@@ -163,15 +165,23 @@ class OracleBackend(Backend, driver=oracledb):
         self.execute("SELECT DBMS_LOCK.RELEASE(:1) FROM dual", (lock_id,))
 
     def begin(self) -> None:
-        """Begin an implicit transaction (no SQL required in Oracle)."""
+        """Begin a transaction by disabling autocommit.
+
+        The migration statements and history marks are committed together by
+        :meth:`commit`; with autocommit on, each statement would commit
+        immediately.
+        """
+        self.connection.autocommit = False
         self._in_transaction = True
 
     def commit(self) -> None:
-        """Commit the current transaction."""
+        """Commit the current transaction and restore autocommit."""
         self.connection.commit()
+        self.connection.autocommit = True
         self._in_transaction = False
 
     def rollback(self) -> None:
-        """Rollback the current transaction."""
+        """Rollback the current transaction and restore autocommit."""
         self.connection.rollback()
+        self.connection.autocommit = True
         self._in_transaction = False

@@ -1,5 +1,3 @@
-from collections.abc import Generator
-from contextlib import contextmanager
 from typing import Any, ClassVar
 
 from classic.migrations.backends.base import Backend
@@ -78,6 +76,8 @@ class FakeBackend(Backend, driver=_FakeDriver):
         self.db_args = kwargs.get("db_args", {})
         self.lock_timeout = kwargs.get("lock_timeout")
         self.migration_table = kwargs.get("migration_table", "migrations")
+        self.migration_schema = kwargs.get("migration_schema")
+        self.versions_schema = kwargs.get("versions_schema")
         self.versions_table = "versions"
         self._in_transaction = False
         self._connection = _FakeConnection()
@@ -162,11 +162,6 @@ class FakeBackend(Backend, driver=_FakeDriver):
         self._locked_flag = False
         self._oplog.append(("release_lock", None))
         self._maybe_fail("release_lock")
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        self.rollback()
-        yield
 
     def list_tables(self) -> list[str]:
         return [self.migration_table] if self._migration_table_ready else []

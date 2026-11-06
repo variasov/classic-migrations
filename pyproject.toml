@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "classic-migrations"
-version = "2.1.0"
+version = "3.0.0"
 description = "Database migrations with SQL"
 readme = "README.rst"
 authors = [
@@ -146,4 +146,25 @@ ignore_names = [
     "pytestmark",       # read by pytest
     "return_value",     # Mock configuration in tests
     "side_effect",
+]
+
+[tool.mutmut]
+source_paths = ["src/classic/migrations"]
+pytest_add_cli_args = ["-o", "addopts="]
+mutate_only_covered_lines = true
+do_not_mutate = [
+    "src/classic/migrations/backends/oracle.py",
+    "src/classic/migrations/backends/psycopg.py",
+    "src/classic/migrations/backends/pymysql.py",
+    "src/classic/migrations/backends/pymssql.py",
+]
+pytest_add_cli_args_test_selection = [
+    "tests/test_migrations.py",
+    "tests/test_migrator.py",
+    "tests/test_cli.py",
+    "tests/test_settings.py",
+    "tests/test_package.py",
+    "tests/test_integration.py",
+    "tests/test_backend_base.py",
+    "tests/backends/test_sqlite3.py",
 ]

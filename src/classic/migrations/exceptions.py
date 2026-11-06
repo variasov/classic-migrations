@@ -16,10 +16,6 @@
 """Exception types used throughout the library."""
 
 
-class InvalidArgument(Exception):
-    """Invalid CLI argument."""
-
-
 class BadConnectionURI(Exception):
     """An invalid connection URI."""
 

@@ -9,11 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from classic.migrations.cli import CLI, main, verbosity_levels
+from classic.migrations.backends.base import Backend
+from classic.migrations.cli import CLI, _is_driver_error, main, verbosity_levels
 from classic.migrations.exceptions import (
     BadConnectionURI,
     BadMigration,
-    InvalidArgument,
     MigrationConflict,
     MigrationLockError,
     MigrationPending,
@@ -473,6 +473,25 @@ class TestCmdList:
         assert "migrations" in capsys.readouterr().out
 
 
+def _get_subparser(
+    parser: argparse.ArgumentParser, name: str,
+) -> argparse.ArgumentParser | None:
+    for action in parser._actions:
+        choices = getattr(action, "choices", None)
+        if choices and name in choices:
+            return choices[name]
+    return None
+
+
+def _get_action(subparser: argparse.ArgumentParser | None, dest: str) -> Any:
+    if subparser is None:
+        return None
+    for action in subparser._actions:
+        if action.dest == dest:
+            return action
+    return None
+
+
 class _FakeTty(io.StringIO):
     def isatty(self) -> bool:
         return True
@@ -548,19 +567,15 @@ class TestMain:
         mock_collection.list.assert_called_once()
         assert "STATUS,ID,SOURCE" in capsys.readouterr().out
 
-    def test_main_invalid_argument_exits_2(
+    def test_main_unknown_exception_propagates(
         self,
         mock_migrator: MagicMock,
         mock_collection: MagicMock,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        mock_collection.to_apply.side_effect = InvalidArgument("boom")
+        mock_collection.to_apply.side_effect = ValueError("boom")
         patches = _patch_builders(mock_migrator, mock_collection)
-        with patches[0], patches[1], pytest.raises(SystemExit) as exc_info:
+        with patches[0], patches[1], pytest.raises(ValueError, match="boom"):
             main(["apply"])
-        assert exc_info.value.code == 2
-        assert "boom" in capsys.readouterr().err
-
     def test_main_uses_same_migrator_and_collection(
         self,
         mock_migrator: MagicMock,
@@ -888,3 +903,239 @@ class TestErrorHandling:
         err = capsys.readouterr().err
         assert err == "error: Migration 'nonexistent' not found\n"
         assert "Traceback" not in err
+
+
+
+class TestIsDriverError:
+    def test_detects_error_via_driver_Error_attr(self) -> None:
+        class _MockDriver:
+            __name__ = "mock_error"
+            DatabaseError = ValueError
+            Error = TypeError
+
+        class _MockBackend:
+            driver = _MockDriver
+
+        with patch.dict(Backend.implementations, {"mock_error": _MockBackend}):
+            assert _is_driver_error(TypeError("test")) is True
+            assert _is_driver_error(ValueError("test")) is False
+            assert _is_driver_error(RuntimeError("test")) is False
+
+    def test_detects_error_without_Error_attr(self) -> None:
+        class _MockDriver:
+            __name__ = "mock_no_error"
+            DatabaseError = TypeError
+
+        class _MockBackend:
+            driver = _MockDriver
+
+        with patch.dict(Backend.implementations, {"mock_no_error": _MockBackend}):
+            assert _is_driver_error(TypeError("test")) is True
+            assert _is_driver_error(ValueError("test")) is False
+
+
+class TestParserProgAndHelp:
+    def test_parser_prog_is_migrations(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        assert parser.prog == "migrations"
+
+    def test_verbosity_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "apply"), "verbosity")
+        assert action is not None
+        assert action.help == (
+            "Verbose output. Use multiple times to increase level of verbosity"
+        )
+
+    def test_apply_help_text(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        assert "Apply migrations" in parser.format_help()
+
+    def test_apply_migration_name_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "apply"), "migration_name")
+        assert action is not None
+        assert action.help == "Apply migrations up to and including this one"
+
+    def test_apply_fake_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "apply"), "fake")
+        assert action is not None
+        assert action.help == (
+            "Only create history records, without running the migrations"
+        )
+
+    def test_apply_plan_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "apply"), "plan")
+        assert action is not None
+        assert action.help == (
+            "Do not apply migrations, only list those that could be applied"
+        )
+
+    def test_list_help_text(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        assert "List all available and applied migrations" in parser.format_help()
+
+    def test_list_history_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "list"), "history")
+        assert action is not None
+        assert action.help == "Show only applied and pending migrations"
+
+    def test_rollback_help_text(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        assert "Rollback migrations" in parser.format_help()
+
+    def test_rollback_migration_name_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "rollback"), "migration_name")
+        assert action is not None
+        assert action.help == "Rollback migrations up to and including this one"
+
+    def test_rollback_fake_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "rollback"), "fake")
+        assert action is not None
+        assert action.help == (
+            "Only create history records, without running the migrations"
+        )
+
+    def test_rollback_plan_help(self, cli: CLI) -> None:
+        parser = cli.build_parser()
+        action = _get_action(_get_subparser(parser, "rollback"), "plan")
+        assert action is not None
+        assert action.help == (
+            "Do not rollback migrations, only list those that could be rolled back"
+        )
+
+    def test_help_text_no_xx_prefix(self, cli: CLI) -> None:
+        """Help texts must not have 'XX' prefix/suffix (mutmut_44, _96, _122)."""
+        help_text = cli.build_parser().format_help()
+        assert "XXApply" not in help_text
+        assert "XXList" not in help_text
+        assert "XXRollback" not in help_text
+
+
+class TestLoggingFormat:
+    def test_configure_logging_format(self, cli: CLI) -> None:
+        with patch.object(logging, "basicConfig") as mock_basic_config:
+            cli._configure_logging(0)
+        mock_basic_config.assert_called_once_with(
+            format="%(levelname)s %(name)s: %(message)s",
+            level=logging.WARNING,
+            force=True,
+        )
+
+
+class TestMakeMigrator:
+    def test_passes_all_params(
+        self,
+        empty_env: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("SOURCES", str(empty_env))
+        monkeypatch.setenv("DATABASE_DRIVER", "sqlite3")
+        monkeypatch.setenv("DATABASE_HOST", "myhost")
+        monkeypatch.setenv("DATABASE_PORT", "6543")
+        monkeypatch.setenv("DATABASE_NAME", "mydb")
+        monkeypatch.setenv("DATABASE_USER", "myuser")
+        monkeypatch.setenv("DATABASE_PASSWORD", "mypass")
+        monkeypatch.setenv("MIGRATIONS_LOCK_TIMEOUT", "3.5")
+        monkeypatch.setenv("MIGRATIONS_TABLE", "my_migrations")
+        monkeypatch.setenv("MIGRATIONS_SCHEMA", "my_schema")
+        monkeypatch.setenv("OLD_MIGRATIONS_SCHEMA", "my_old_schema")
+
+        with patch("classic.migrations.cli.Migrator") as mig_cls:
+            CLI()._make_migrator()
+
+        mig_cls.assert_called_once_with(
+            driver="sqlite3",
+            db_host="myhost",
+            db_port=6543,
+            db_name="mydb",
+            db_user="myuser",
+            db_pass="mypass",  # noqa: S106
+            lock_timeout=3.5,
+            migration_table="my_migrations",
+            migration_schema="my_schema",
+            versions_schema="my_old_schema",
+        )
+
+
+class TestPrintMigrations:
+    def test_shows_source_dir(
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        migrations = [
+            Migration("0001.a", "/fake/0001.a.sql", source_dir="dir1"),
+            Migration("0002.b", "/fake/0002.b.sql", source_dir="dir2"),
+        ]
+        cli._print_migrations(migrations)
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        assert lines[1] == "0001.a,dir1"
+        assert lines[2] == "0002.b,dir2"
+
+    def test_empty_source_dir_shows_empty(
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        migrations = [Migration("0001.a", "/fake/0001.a.sql", source_dir=None)]
+        cli._print_migrations(migrations)
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        cells = lines[1].split(",")
+        assert cells == ["0001.a", ""]
+
+    def test_csv_header(
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        migrations = [Migration("0001.a", "/fake/0001.a.sql")]
+        cli._print_migrations(migrations)
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        assert lines[0] == "ID,SOURCE"
+
+
+class TestCmdListEmptySource:
+    def test_empty_source_dir_shows_empty_cell(
+        self,
+        cli: CLI,
+        mock_migrator: MagicMock,
+        mock_collection: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_migrator.history.return_value = []
+        mock_collection.list.return_value = [
+            _make_migration("0001.a"),
+        ]
+        args = argparse.Namespace(history=False)
+        cli._list(args)
+
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        cells = lines[1].split(",")
+        assert cells == ["U", "0001.a", ""]
+    def test_with_object_missing_source_dir(
+        self,
+        cli: CLI,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Object without ``source_dir`` (mutmut_9, _12 in _print_migrations)."""
+
+        class _Obj:
+            id = "no_src"
+
+        cli._print_migrations([_Obj()])
+        output = capsys.readouterr().out
+        lines = output.splitlines()
+        assert lines[0] == "ID,SOURCE"
+        cells = lines[1].split(",")
+        assert cells == ["no_src", ""]
+

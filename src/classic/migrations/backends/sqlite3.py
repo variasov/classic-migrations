@@ -16,8 +16,6 @@
 """SQLite backend implemented with the standard ``sqlite3`` driver."""
 
 import sqlite3
-from collections.abc import Generator
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -139,8 +137,3 @@ class SQLiteBackend(Backend, driver=sqlite3):
             conn.rollback()
         finally:
             conn.close()
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        """Provide a transaction-disabled context (no-op for SQLite)."""
-        yield

@@ -3,7 +3,11 @@ from pathlib import Path
 import pytest
 
 from classic.migrations import MigrationsCollection, exceptions
-from classic.migrations.migrations import Hook, Migration
+from classic.migrations.migrations import (
+    Hook,
+    Migration,
+    parse_metadata_from_sql_comments,
+)
 
 
 def write_file(path: Path, content: str) -> Path:
@@ -941,3 +945,186 @@ class TestSources:
     def test_empty_sources(self) -> None:
         with pytest.raises(ValueError, match="empty"):
             MigrationsCollection([])
+# ---------------------------------------------------------------------------
+# Mutation-killing tests
+# ---------------------------------------------------------------------------
+
+
+class TestCrLfLineEnding:
+    """Kill mutants that break \r\n/\r detection in parse_metadata.
+
+    Mutants: mutmut_3 (re.search returns None), mutmut_8 (broken regex).
+    """
+
+    def test_r_returns_correct_sql_line_ending(self) -> None:
+        """CR-only content must preserve \r line endings in returned SQL."""
+        _directives, sql = parse_metadata_from_sql_comments("SELECT 1;\r")
+        assert sql == "SELECT 1;\r"
+
+    def test_rlf_with_directives_parses_correctly(self) -> None:
+        """CRLF content: directives extract and SQL ends with \r\n."""
+        directives, sql = parse_metadata_from_sql_comments(
+            "-- depends: 0000.a\r\nSELECT 1;\r\n",
+        )
+        assert directives["depends"] == ["0000.a"]
+        assert sql == "SELECT 1;\r\n"
+
+    def test_r_only_with_directives_parses_correctly(self) -> None:
+        """CR-only content: directives must still be extractable."""
+        directives, sql = parse_metadata_from_sql_comments(
+            "-- depends: 0000.a\rSELECT 1;\r",
+        )
+        assert directives["depends"] == ["0000.a"]
+        assert sql == "SELECT 1;\r"
+
+
+class TestTransactionalErrorMessagePaths:
+    """Kill mutants that change args to _parse_transactional in Migration.load.
+
+    Mutants: mutmut_20 (self.path -> None), mutmut_21 ("" -> None),
+    mutmut_25 ("" -> "XXXX").
+    """
+
+    def test_invalid_transactional_messages_include_source_path(
+        self,
+        source: Path,
+    ) -> None:
+        """The actual source path must appear right after 'in '."""
+        p = source / "0001.init.sql"
+        write_file(p, "-- transactional: maybe\nSELECT 1;\n")
+        m = Migration("0001.init", str(p))
+        with pytest.raises(exceptions.BadMigration) as exc:
+            m.load()
+        message = str(exc.value)
+        # Doc: expected path after 'in '
+        assert "in " + str(p) in message, (
+            f"Expected path {p!r} right after 'in ', got: {message}"
+        )
+
+
+class TestRollbackDirectiveErrorPath:
+    """Kill mutants that change args to _parse_transactional in
+    _load_rollback_directives.
+
+    Mutants: mutmut_7 (self.rollback_path() -> None),
+            mutmut_8 ("rollback file " -> None),
+            mutmut_12 ("rollback file " -> "XXrollback file XX"),
+            mutmut_13 ("rollback file " -> "ROLLBACK FILE ").
+    """
+
+    def test_invalid_rollback_transactional_messages_include_rollback_file(
+        self,
+        source: Path,
+    ) -> None:
+        """The rollback file path and 'rollback file ' prefix must be in the error."""
+        p = source / "0001.a.sql"
+        rp = source / "0001.a.rollback.sql"
+        write_file(p, "SELECT 1;\n")
+        write_file(rp, "-- transactional: maybe\nDROP TABLE t;\n")
+        m = Migration("0001.a", str(p))
+        with pytest.raises(exceptions.BadMigration) as exc:
+            m.load()
+        message = str(exc.value)
+        # Doc: kill mutmut_7 (rollback path replaced by None)
+        assert str(rp) in message, (
+            f"Expected rollback path {rp!r} in error, got: {message}"
+        )
+        # Doc: kill mutmut_8/12/13 (rollback prefix malformed)
+        assert " in rollback file " in message, (
+            f"Expected ' in rollback file ' in error, got: {message}"
+        )
+
+
+class TestReadMigrationsDirectoryBreak:
+    """Kill mutmut_11 (continue -> break for directory) in _read_migrations.
+    A directory before a .sql file should be skipped, not break the loop.
+    """
+
+    def test_subdirectory_before_migration_does_not_break(self, source: Path) -> None:
+        # "0000_sub" sorts before "0001.a.sql" -> directory first, file second
+        (source / "0000_sub").mkdir()
+        write_file(source / "0001.a.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(str(source))
+        assert [m.id for m in collection.list()] == ["0001.a"]
+
+
+class TestReadMigrationsHookBreak:
+    """Kill mutmut_22 (continue -> break for hooks) in _read_migrations.
+    If a hook file sorts between two .sql files, the second .sql must still be found.
+    """
+
+    def test_hook_between_migrations_does_not_break(self, source: Path) -> None:
+        # "z0001.a.sql" sorts after 'pre-apply.sql' (p < z)
+        write_file(source / "pre-apply.sql", "SELECT 1;\n")
+        write_file(source / "z0001.a.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(str(source))
+        assert [m.id for m in collection.list()] == ["z0001.a"]
+
+
+class TestMigrationSourceDir:
+    """Kill mutmut_28 (source_dir=str(None)), mutmut_31 (removed),
+    mutmut_33 (str(None) -> "None") in _read_migrations.
+
+    The Migration's source_dir must be the directory path, not None or "None".
+    """
+
+    def test_loaded_migration_has_source_dir(self, source: Path) -> None:
+        write_file(source / "0001.a.sql", "SELECT 1;\n")
+        collection = MigrationsCollection(str(source))
+        m = collection.list()[0]
+        assert m.source_dir == str(source)
+
+
+class TestCircularDependencyMessageFormat:
+    """Kill _topological mutmut_12, mutmut_16.
+
+    mutmut_12: adds XX prefix/suffix to error message.
+    mutmut_16: changes join separator to "XX, XX".
+    """
+
+    def test_message_starts_with_Circular(self, source: Path) -> None:
+        write_file(
+            source / "0001.a.sql",
+            "-- depends: 0002.b\nCREATE TABLE a(id INTEGER);\n",
+        )
+        write_file(
+            source / "0002.b.sql",
+            "-- depends: 0001.a\nCREATE TABLE b(id INTEGER);\n",
+        )
+        collection = MigrationsCollection(sources=str(source))
+        with pytest.raises(exceptions.BadMigration) as exc:
+            collection.list()
+        message = str(exc.value)
+        assert message.startswith("Circular"), f"Message starts with XX: {message}"
+
+    def test_comma_separator_in_cycle_message(self, source: Path) -> None:
+        write_file(
+            source / "0001.a.sql",
+            "-- depends: 0002.b\nCREATE TABLE a(id INTEGER);\n",
+        )
+        write_file(
+            source / "0002.b.sql",
+            "-- depends: 0001.a\nCREATE TABLE b(id INTEGER);\n",
+        )
+        collection = MigrationsCollection(sources=str(source))
+        with pytest.raises(exceptions.BadMigration) as exc:
+            collection.list()
+        message = str(exc.value)
+        assert ", \\d" in message or ", " in message, (
+            f"Expected comma-space separator in cycle message, got: {message}"
+        )
+
+    def test_no_XX_in_cycle_message(self, source: Path) -> None:
+        write_file(
+            source / "0001.a.sql",
+            "-- depends: 0002.b\nCREATE TABLE a(id INTEGER);\n",
+        )
+        write_file(
+            source / "0002.b.sql",
+            "-- depends: 0001.a\nCREATE TABLE b(id INTEGER);\n",
+        )
+        collection = MigrationsCollection(sources=str(source))
+        with pytest.raises(exceptions.BadMigration) as exc:
+            collection.list()
+        message = str(exc.value)
+        assert "X" not in message, f"Message contains XX marker: {message}"

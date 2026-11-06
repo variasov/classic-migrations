@@ -16,8 +16,6 @@
 """PostgreSQL backend implemented with the ``psycopg`` driver."""
 
 import time
-from collections.abc import Generator
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -138,12 +136,6 @@ class PsycopgBackend(Backend, driver=psycopg):
         key1 = lock_id & 0x7FFFFFFF
         key2 = (lock_id >> 32) & 0x7FFFFFFF
         self.execute("SELECT pg_advisory_unlock(%s, %s)", (key1, key2))
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        """Rollback any open transaction for the duration of the context."""
-        self.rollback()
-        yield
 
     def commit(self) -> None:
         """Commit the current transaction."""

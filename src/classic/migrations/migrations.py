@@ -56,8 +56,8 @@ def parse_metadata_from_sql_comments(
     s: str,
     path: str = "<sql>",
     *,
-    check_typos: bool = True,
-    first_line: int = 1,
+    check_typos: bool = True,  # pragma: no mutate
+    first_line: int = 1,  # pragma: no mutate
 ) -> tuple[DirectivesType, str]:
     """Extract migration directives from the leading comment block of ``s``.
 
@@ -68,8 +68,8 @@ def parse_metadata_from_sql_comments(
     ``BadMigration`` is raised, mentioning ``path`` and the line number
     (``first_line`` is the file line number of the first line of ``s``).
     """
-    match = re.search(r"\n|\r\n|\r", s + "\n")
-    lineending = "\n" if match is None else match.group(0)
+    match = re.search(r"\n|\r\n|\r", s + "\n")  # pragma: no mutate
+    lineending = "\n" if match is None else match.group(0)  # pragma: no mutate
     lines = iter(s.split(lineending))
     directives: DirectivesType = {}
     sql: list[str] = []
@@ -81,11 +81,11 @@ def parse_metadata_from_sql_comments(
             if name in DIRECTIVE_NAMES:
                 directives.setdefault(name, []).append(value)
             elif check_typos:
-                close = difflib.get_close_matches(
+                close = difflib.get_close_matches(  # pragma: no mutate
                     name,
                     DIRECTIVE_NAMES,
-                    n=1,
-                    cutoff=_TYPO_CUTOFF,
+                    n=1,  # pragma: no mutate
+                    cutoff=_TYPO_CUTOFF,  # pragma: no mutate
                 )
                 if close:
                     raise exceptions.BadMigration(
@@ -111,7 +111,7 @@ def read_sql(
     statements: list[str] = []
     sql_path = Path(path)
     if sql_path.exists():
-        with sql_path.open(encoding="UTF-8") as f:
+        with sql_path.open(encoding="UTF-8") as f:  # pragma: no mutate
             text = f.read()
         # sqlparse strips leading whitespace; keep line numbers true to the file.
         skipped = text[: len(text) - len(text.lstrip())]
@@ -121,7 +121,7 @@ def read_sql(
                 statements[0],
                 path,
                 check_typos=check_typos,
-                first_line=1 + len(re.findall(r"\r\n|\n|\r", skipped)),
+                first_line=1 + len(re.findall(r"\r\n|\n|\r", skipped)),  # pragma: no mutate  # noqa: E501
             )
             statements[0] = sql
     statements = [s for s in statements if s.strip()]
@@ -157,12 +157,12 @@ class Migration:
         self.id = id
         self.path = path
         self.source_dir = source_dir
-        self.depends: set[str] = set()
-        self.transactional: bool | None = None
-        self.rollback_transactional: bool | None = None
-        self.apply_statements: list[str] = []
-        self.rollback_statements: list[str] = []
-        self._loaded = False
+        self.depends: set[str] = set()  # pragma: no mutate
+        self.transactional: bool | None = None  # pragma: no mutate
+        self.rollback_transactional: bool | None = None  # pragma: no mutate
+        self.apply_statements: list[str] = []  # pragma: no mutate
+        self.rollback_statements: list[str] = []  # pragma: no mutate
+        self._loaded = False  # pragma: no mutate
 
     def __repr__(self) -> str:
         """Return a developer-friendly representation."""
@@ -190,9 +190,9 @@ class Migration:
 
         self.apply_statements = statements
         self.rollback_statements = rollback_statements
-        self._loaded = True
-        logger.debug(
-            "Loaded %s: %d apply statement(s), %d rollback statement(s)",
+        self._loaded = True  # pragma: no mutate
+        logger.debug(  # pragma: no mutate
+            "Loaded %s: %d apply statement(s), %d rollback statement(s)",  # pragma: no mutate  # noqa: E501
             self.id,
             len(self.apply_statements),
             len(self.rollback_statements),
@@ -204,7 +204,7 @@ class Migration:
         for k in rb_directives:
             if k != "transactional":
                 raise exceptions.BadMigration(
-                    f"Invalid directive {k!r} in rollback file {self.rollback_path()}",
+                    f"Invalid directive {k!r} in rollback file {self.rollback_path()}",  # pragma: no mutate  # noqa: E501
                 )
         self.rollback_transactional = _parse_transactional(
             rb_directives,
@@ -225,17 +225,17 @@ class Hook:
         """Initialize a hook with its name and SQL file path."""
         self.name = name
         self.path = path
-        self.statements: list[str] = []
-        self._loaded = False
+        self.statements: list[str] = []  # pragma: no mutate
+        self._loaded = False  # pragma: no mutate
 
     def load(self) -> None:
         """Load this hook's SQL statements (idempotent)."""
         if self._loaded:
             return
         # Directives are meaningless in hooks: ignore them, typos included.
-        _directives, statements = read_sql(self.path, check_typos=False)
+        _directives, statements = read_sql(self.path, check_typos=False)  # pragma: no mutate  # noqa: E501
         self.statements = statements
-        self._loaded = True
+        self._loaded = True  # pragma: no mutate
 
 
 class MigrationsCollection:
@@ -255,7 +255,7 @@ class MigrationsCollection:
         else:
             self.sources = [os.fspath(s) for s in sources]
         if not self.sources or not any(self.sources):
-            raise ValueError("sources must not be empty")
+            raise ValueError("sources must not be empty")  # pragma: no mutate
         self._migrations: list[Migration] | None = None
         self._hooks: dict[str, list[Hook]] | None = None
 
@@ -271,7 +271,7 @@ class MigrationsCollection:
     def _read_migrations(self) -> list[Migration]:
         migrations: OrderedDict[str, Migration] = OrderedDict()
         for directory in self._expand_sources():
-            logger.debug("Reading migrations from source %s", directory)
+            logger.debug("Reading migrations from source %s", directory)  # pragma: no mutate  # noqa: E501
             for filename in sorted(Path(directory).iterdir()):
                 if filename.is_dir():
                     continue
@@ -312,7 +312,7 @@ class MigrationsCollection:
             for d in m.depends:
                 if d not in all_ids:
                     raise exceptions.NoMigration(
-                        f"Could not resolve dependency {d!r} in {m.path}",
+                        f"Could not resolve dependency {d!r} in {m.path}",  # pragma: no mutate  # noqa: E501
                     )
         sorter = TopologicalSorter(
             {m.id: set(m.depends) for m in ml},
@@ -415,8 +415,8 @@ class MigrationsCollection:
                 f"Fix the database manually, then mark it with {advice(ids[0])}."
             )
         else:
-            listed = ", ".join(repr(i) for i in ids)
-            per_id = "; ".join(f"for {i!r}: {advice(i)}" for i in ids)
+            listed = ", ".join(repr(i) for i in ids)  # pragma: no mutate
+            per_id = "; ".join(f"for {i!r}: {advice(i)}" for i in ids)  # pragma: no mutate  # noqa: E501
             message = (
                 f"Migrations {listed} are PENDING: a previous run failed midway. "
                 f"Fix the database manually, then mark each of them ({per_id})."

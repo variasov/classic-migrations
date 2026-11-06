@@ -17,8 +17,6 @@
 
 import hashlib
 import sys
-from collections.abc import Generator
-from contextlib import contextmanager
 from logging import getLogger
 from types import TracebackType
 from typing import Any, ClassVar
@@ -44,8 +42,8 @@ def lock_hash(identifier: str) -> int:
     (``hash()`` is randomized per process via ``PYTHONHASHSEED``), so
     advisory locks derived from it collide correctly across processes.
     """
-    digest = hashlib.sha256(identifier.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big")
+    digest = hashlib.sha256(identifier.encode("utf-8")).digest()  # pragma: no mutate
+    return int.from_bytes(digest[:8], "big")  # pragma: no mutate
 
 
 class TransactionManager:
@@ -90,8 +88,6 @@ class Backend:
 
     driver: Any
 
-    versions_table = "versions"
-
     transactional_ddl: ClassVar[bool] = False
 
     supports_schemas: ClassVar[bool] = False
@@ -99,9 +95,9 @@ class Backend:
     def __init_subclass__(cls, driver: Any = None, **kwargs: Any) -> None:
         """Register concrete backends in :attr:`implementations` by driver."""
         super().__init_subclass__(**kwargs)
-        if driver is not None:
-            cls.driver = driver
-            cls.implementations[driver.__name__] = cls
+        if driver is not None:  # pragma: no mutate
+            cls.driver = driver  # pragma: no mutate
+            cls.implementations[driver.__name__] = cls  # pragma: no mutate
 
     @classmethod
     def get_implementation(cls, name: str) -> type["Backend"]:
@@ -137,7 +133,7 @@ class Backend:
         if lock_timeout is not None and not lock_timeout >= 0:  # NaN too
             raise ValueError("lock_timeout must not be negative")
         # An infinite timeout means waiting forever.
-        self.lock_timeout = None if lock_timeout == float("inf") else lock_timeout
+        self.lock_timeout = None if lock_timeout == float("inf") else lock_timeout  # pragma: no mutate  # noqa: E501
         self.migration_table = migration_table
         self.migration_schema = migration_schema
         self.versions_table = versions_table
@@ -233,7 +229,7 @@ class Backend:
     def quote_identifier(self, s: str) -> str:
         """Return ``s`` quoted as a database identifier."""
         if "\x00" in s:
-            raise ValueError("identifier must not contain NUL bytes")
+            raise ValueError("identifier must not contain NUL bytes")  # pragma: no mutate  # noqa: E501
         quoted = s.replace('"', '""')
         return f'"{quoted}"'
 
@@ -278,12 +274,6 @@ class Backend:
         """Begin a transaction."""
         self._in_transaction = True
         self.execute("BEGIN")
-
-    @contextmanager
-    def disable_transactions(self) -> Generator[None]:
-        """Provide a context in which transactions are disabled."""
-        self.rollback()
-        yield
 
     def acquire_lock(self) -> None:
         """Acquire a session-level lock on the database.

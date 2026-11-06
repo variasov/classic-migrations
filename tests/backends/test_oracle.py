@@ -92,6 +92,26 @@ def test_mark_applied_inserts_event(backend: OracleBackend) -> None:
     assert history[0][2] == "APPLIED"
 
 
+def test_mark_visible_from_new_connection(backend: OracleBackend) -> None:
+    backend._create_migration_table()
+    backend.mark("0001.init", "APPLIED")
+
+    fresh = OracleBackend(
+        db_host=_env_value("host"),
+        db_port=int(_env_value("port")),
+        db_name=_env_value("name"),
+        db_user=_env_value("user"),
+        db_password=_env_value("password"),
+        migration_table="migrations_test",
+    )
+    try:
+        history = fresh.migration_history()
+        assert [row[0] for row in history] == ["0001.init"]
+        assert [row[2] for row in history] == ["APPLIED"]
+    finally:
+        fresh.close()
+
+
 def test_unmark_appends_rolled_back_event(backend: OracleBackend) -> None:
     backend._create_migration_table()
     backend.mark("0001.init", "APPLIED")
@@ -181,9 +201,9 @@ def test_lock_acquire_release(backend: OracleBackend) -> None:
     assert len(history) == 1
 
 
-def test_lock_rollback_on_exception(backend: OracleBackend) -> None:
+def test_rollback_undoes_uncommitted_mark(backend: OracleBackend) -> None:
     backend._create_migration_table()
-    backend.acquire_lock()
+    backend.begin()
     backend.mark("0001.init", "APPLIED")
     backend.rollback()
     history = backend._migration_history()
@@ -205,14 +225,6 @@ def test_transaction_rollback(backend: OracleBackend) -> None:
         raise RuntimeError("forced")
     history = backend._migration_history()
     assert len(history) == 0
-
-
-def test_disable_transactions_noop(backend: OracleBackend) -> None:
-    backend._create_migration_table()
-    with backend.disable_transactions():
-        backend.mark("0001.init", "APPLIED")
-    history = backend._migration_history()
-    assert len(history) == 1
 
 
 def test_quote_identifier(backend: OracleBackend) -> None:
@@ -319,6 +331,50 @@ class TestOracleLifecycle:
                 self._drop_all(db)
         finally:
             pass
+
+    def test_apply_history_visible_from_new_connection(self, source: Path) -> None:
+        def write_file(path: Path, content: str) -> Path:
+            path.write_text(content, encoding="utf-8")
+            return path
+
+        write_file(source / "0001.init.sql", "CREATE TABLE foo(id INTEGER);\n")
+
+        table = "migrations_it_newconn"
+        db = Migrator(
+            driver="oracledb",
+            db_host=_env_value("host"),
+            db_port=int(_env_value("port")),
+            db_name=_env_value("name"),
+            db_user=_env_value("user"),
+            db_pass=_env_value("password"),
+            migration_table=table,
+        )
+        migrations = MigrationsCollection(str(source))
+
+        with db:
+            history = db.history()
+            hooks, unapplied = migrations.to_apply(history)
+            db.apply(unapplied, hooks)
+
+        fresh = OracleBackend(
+            db_host=_env_value("host"),
+            db_port=int(_env_value("port")),
+            db_name=_env_value("name"),
+            db_user=_env_value("user"),
+            db_password=_env_value("password"),
+            migration_table=table,
+        )
+        try:
+            history = fresh.migration_history()
+            assert history[-1][0] == "0001.init"
+            assert history[-1][2] == "APPLIED"
+        finally:
+            _drop_table(fresh, fresh.migration_table_quoted)
+            fresh.execute(
+                "BEGIN EXECUTE IMMEDIATE 'DROP TABLE foo'; "
+                "EXCEPTION WHEN OTHERS THEN NULL; END;",
+            )
+            fresh.close()
 
 
 def _second_backend() -> OracleBackend:

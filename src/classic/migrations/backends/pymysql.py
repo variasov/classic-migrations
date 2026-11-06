@@ -32,7 +32,8 @@ def _utcnow() -> datetime:
 class PyMySQLBackend(Backend, driver=pymysql):
     """MySQL migration backend using the ``PyMySQL`` driver."""
 
-    transactional_ddl = True
+    # MySQL DDL commits implicitly, so migration DDL cannot be rolled back.
+    transactional_ddl = False
 
     def connect(self) -> pymysql.connections.Connection:
         """Open a MySQL connection in autocommit mode."""

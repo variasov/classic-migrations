@@ -184,14 +184,6 @@ def test_transaction_rollback(backend: PyMySQLBackend) -> None:
     assert len(history) == 0
 
 
-def test_disable_transactions_noop(backend: PyMySQLBackend) -> None:
-    backend._create_migration_table()
-    with backend.disable_transactions():
-        backend.mark("0001.init", "APPLIED")
-    history = backend._migration_history()
-    assert len(history) == 1
-
-
 def test_quote_identifier(backend: PyMySQLBackend) -> None:
     assert backend.quote_identifier("my_table") == "`my_table`"
 

@@ -5,7 +5,7 @@
 ## Проект
 
 `classic-migrations` — библиотека SQL-миграций (форк yoyo-migrations).
-Версия **2.0.0**: только SQL-миграции, разделение на `MigrationsCollection`
+Версия **3.0.0**: только SQL-миграции, разделение на `MigrationsCollection`
 (чтение источников) и `Migrator` (выполнение через `Backend`), append-only
 таблица истории, pre/post-хуки.
 
@@ -41,13 +41,13 @@ uv run pytest
 
 ```
 src/classic/migrations/
-    __init__.py                        # публичный API: MigrationsCollection, Migrator, исключения, __version__
+    __init__.py                        # публичный API: MigrationsCollection, Migrator, Migration, Hook, исключения, __version__
     migrations.py                      # MigrationsCollection + Migration/Hook + чтение/парсинг SQL
     migrator.py                        # Migrator: lock/history/apply/rollback, БЕЗ SQL
     cli.py                             # argparse + main(): list/apply/rollback
     settings.py                        # Settings (чтение из os.environ и .env)
     exceptions.py                      # исключения: BadMigration, MigrationConflict, BadConnectionURI,
-                                       # InvalidArgument, MigrationLockError, NoMigration
+                                       # MigrationLockError, MigrationPending, MissingSource, NoMigration
     backends/
         __init__.py                    # регистрация бэкендов (опциональный импорт)
         base.py                        # Backend: оркестрация, БЕЗ SQL-запросов
@@ -58,7 +58,7 @@ src/classic/migrations/
         oracle.py                      # OracleBackend
 tests/
     conftest.py                        # фикстура source (tmp_path) + get_credentials
-    test_cli.py                        # тесты CLI: парсинг + cmd_* с Mock(Migrator)/Mock(MigrationsCollection)
+    test_cli.py                        # тесты CLI: парсинг + методы CLI._* с Mock(Migrator)/Mock(MigrationsCollection)
     test_migrations.py                 # тесты MigrationsCollection без бэкенда
     test_migrator.py                   # тесты Migrator с FakeBackend
     test_integration.py                # публичный API на реальной SQLite в RAM
@@ -118,7 +118,8 @@ tests/
 
 Тесты разделены по слоям:
 
-- **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы `cmd_*`.
+- **`tests/test_cli.py`** — только парсинг аргументов CLI и вызовы методов
+  `CLI._apply`/`CLI._rollback`/`CLI._list`.
   `Migrator` и `MigrationsCollection` подменяются `Mock`, проверяется что
   вызываются правильные методы с правильными параметрами
   (`assert_called_once_with(...)`). Настоящие миграции и БД не используются.

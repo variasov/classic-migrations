@@ -19,24 +19,24 @@ from .cli import CLI
 from .exceptions import (
     BadConnectionURI,
     BadMigration,
-    InvalidArgument,
     MigrationConflict,
     MigrationLockError,
     MigrationPending,
     MissingSource,
     NoMigration,
 )
-from .migrations import MigrationsCollection
+from .migrations import Hook, Migration, MigrationsCollection
 from .migrator import Migrator
 from .settings import Settings
 
-__version__ = "2.1.0"
+__version__ = "3.0.0"
 
 __all__ = (
     "CLI",
     "BadConnectionURI",
     "BadMigration",
-    "InvalidArgument",
+    "Hook",
+    "Migration",
     "MigrationConflict",
     "MigrationLockError",
     "MigrationPending",
